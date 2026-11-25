@@ -1,11 +1,15 @@
-"""台車シミュレーション: 状態遷移と安全ルール(DBや画面に依存しない純粋関数)。
+"""配送台車シミュレーション: 状態遷移と安全ルール(DBや画面に依存しない純粋関数)。
 
 各 apply_* は (新しい状態dict, イベントlist) を返す。拒否する操作は ActionError を送出する。
 イベントは (kind, severity, detail)。
+経路(route)は {"points":[[lat,lon]..], "total":m, "stops":[{"dist":m,"kind":"corner|signal"}..], "source":"road|fallback"}。
+停止ポイントは順番に通過し、通過済みの数を stop_idx、いま停止ポイントで止まっているかを stop_reached で持つ。
 """
+import bisect
 import json
 import math
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
 MAX_SPEED_KMH = 6.0  # 希望最高速度(上限として固定)
 MAX_SPEED_MS = MAX_SPEED_KMH * 1000 / 3600
@@ -13,6 +17,7 @@ UNLOCK_WINDOW_S = 30
 MAX_DT_S = 60.0
 ACTIVE = ("en_route", "arrived", "unlock_pending", "unlocked")
 FINAL = ("completed", "cancelled")
+STOP_HOLDS = ("corner", "signal_red", "signal_unknown", "signal_green")
 
 STATUS_LABEL = {
     "reserved": "予約受付",
@@ -55,6 +60,7 @@ def parse_iso(s):
     return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
 
 
+# ---------- 地理・経路 ----------
 def haversine(a, b):
     r = 6371000.0
     p1, p2 = math.radians(a[0]), math.radians(b[0])
@@ -63,35 +69,140 @@ def haversine(a, b):
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def build_route(depot, dest):
-    """出発地→(曲がり角)→配送先。曲がり角と擬似信号を停止ポイントとして置く。"""
-    corner = (dest[0], depot[1])
-    leg1, leg2 = haversine(depot, corner), haversine(corner, dest)
-    if leg1 >= 5 and leg2 >= 5:
-        pts, legs = [list(depot), list(corner), list(dest)], [leg1, leg2]
-    else:
-        pts, legs = [list(depot), list(dest)], [haversine(depot, dest)]
-    total = sum(legs)
-    stops = []
-    if len(legs) == 2:
-        stops.append({"dist": leg1, "kind": "corner", "state": "pending"})
-    if total > 20:
-        stops.append({"dist": total * 0.85, "kind": "signal", "state": "pending"})
-    stops.sort(key=lambda x: x["dist"])
-    return {"points": pts, "legs": legs, "total": total, "stops": stops}
+def _bearing(a, b):
+    la1, la2, dl = math.radians(a[0]), math.radians(b[0]), math.radians(b[1] - a[1])
+    y = math.sin(dl) * math.cos(la2)
+    x = math.cos(la1) * math.sin(la2) - math.sin(la1) * math.cos(la2) * math.cos(dl)
+    return math.degrees(math.atan2(y, x)) % 360
+
+
+def _cumulative(points):
+    cum = [0.0]
+    for a, b in zip(points, points[1:]):
+        cum.append(cum[-1] + haversine(a, b))
+    return cum
+
+
+def point_at(points, cum, d):
+    d = max(0.0, min(d, cum[-1]))
+    i = max(0, min(bisect.bisect_right(cum, d) - 1, len(points) - 2))
+    seg = cum[i + 1] - cum[i]
+    t = 0.0 if seg <= 0 else (d - cum[i]) / seg
+    a, b = points[i], points[i + 1]
+    return a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
 
 
 def pos_at(route, dist):
-    dist = max(0.0, min(dist, route["total"]))
-    for i, leg in enumerate(route["legs"]):
-        if dist <= leg or i == len(route["legs"]) - 1:
-            a, b = route["points"][i], route["points"][i + 1]
-            t = 0 if leg == 0 else min(1.0, dist / leg)
-            return a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t
-        dist -= leg
-    return tuple(route["points"][-1])
+    return point_at(route["points"], route["cum"], dist)
 
 
+@lru_cache(maxsize=64)
+def load_route(route_json):
+    r = json.loads(route_json)
+    if len(r["points"]) == 1:
+        r["points"].append(list(r["points"][0]))
+    r["cum"] = _cumulative(r["points"])
+    r["total"] = r["cum"][-1]
+    return r
+
+
+def build_route(origin, dest):
+    """道路経路を取得できないときの簡易経路(L字の直線)。曲がり角と擬似信号を置く。"""
+    corner = (dest[0], origin[1])
+    leg1, leg2 = haversine(origin, corner), haversine(corner, dest)
+    pts = [origin, corner, dest] if leg1 >= 5 and leg2 >= 5 else [origin, dest]
+    total = sum(haversine(a, b) for a, b in zip(pts, pts[1:]))
+    stops = []
+    if len(pts) == 3:
+        stops.append({"dist": leg1, "kind": "corner"})
+    if total > 20:
+        stops.append({"dist": total * 0.85, "kind": "signal"})
+    stops.sort(key=lambda x: x["dist"])
+    cum = _cumulative(pts)
+    for st in stops:
+        st["lat"], st["lon"] = point_at(pts, cum, st["dist"])
+    return {"points": [list(p) for p in pts], "total": total, "stops": stops, "source": "fallback"}
+
+
+def _corners(pts, cum, total, span=12.0, min_turn=50.0):
+    """道の形から曲がり角を探す(前後12m先の進行方向が50度以上変わる所)。"""
+    cands = []
+    for i in range(1, len(pts) - 1):
+        d = cum[i]
+        if d < span * 0.6 or total - d < span * 0.6:
+            continue
+        a = point_at(pts, cum, d - span)
+        b = point_at(pts, cum, d + span)
+        turn = abs((_bearing(pts[i], b) - _bearing(a, pts[i]) + 540) % 360 - 180)
+        if turn >= min_turn:
+            cands.append((d, turn))
+    out, group = [], []
+    for c in cands:
+        if group and c[0] - group[-1][0] > 25:
+            out.append(max(group, key=lambda x: x[1])[0])
+            group = []
+        group.append(c)
+    if group:
+        out.append(max(group, key=lambda x: x[1])[0])
+    return out
+
+
+def _snap_signals(pts, cum, signals, max_m=20.0):
+    """信号機の座標を経路上の距離に変換(経路から20m以内のものだけ)。"""
+    if not signals:
+        return []
+    lat0, lon0 = pts[0]
+    kx, ky = 111320 * math.cos(math.radians(lat0)), 110540
+    P = [((p[1] - lon0) * kx, (p[0] - lat0) * ky) for p in pts]
+    total = cum[-1]
+    dists = []
+    for s in signals:
+        sx, sy = (s[1] - lon0) * kx, (s[0] - lat0) * ky
+        best = None
+        for i in range(len(P) - 1):
+            ax, ay = P[i]
+            bx, by = P[i + 1]
+            if sx < min(ax, bx) - max_m or sx > max(ax, bx) + max_m or sy < min(ay, by) - max_m or sy > max(ay, by) + max_m:
+                continue
+            dx, dy = bx - ax, by - ay
+            l2 = dx * dx + dy * dy
+            t = 0.0 if l2 == 0 else max(0.0, min(1.0, ((sx - ax) * dx + (sy - ay) * dy) / l2))
+            dd = math.hypot(sx - (ax + t * dx), sy - (ay + t * dy))
+            if best is None or dd < best[0]:
+                best = (dd, cum[i] + t * math.sqrt(l2))
+        if best and best[0] <= max_m and 8 < best[1] < total - 8:
+            dists.append(best[1])
+    dists.sort()
+    out = []
+    for d in dists:  # 同じ交差点の重複(横断歩道と信号など)をまとめる
+        if not out or d - out[-1] > 15:
+            out.append(d)
+    return out
+
+
+def plan_from_geometry(points, signals):
+    """道路の形(座標列)と信号機の位置から、走行プラン(曲がり角・信号の停止ポイント付き)を作る。"""
+    pts = []
+    for p in points:
+        q = (round(p[0], 6), round(p[1], 6))
+        if not pts or haversine(pts[-1], q) >= 2.0:
+            pts.append(q)
+    end = (round(points[-1][0], 6), round(points[-1][1], 6))
+    if pts[-1] != end:
+        pts.append(end)
+    if len(pts) < 2:
+        raise ValueError("経路が短すぎます")
+    cum = _cumulative(pts)
+    total = cum[-1]
+    stops = [{"dist": round(d, 1), "kind": "corner"} for d in _corners(pts, cum, total)]
+    stops += [{"dist": round(d, 1), "kind": "signal"} for d in _snap_signals(pts, cum, signals)]
+    stops.sort(key=lambda x: x["dist"])
+    for st in stops:
+        st["lat"], st["lon"] = (round(v, 6) for v in point_at(pts, cum, st["dist"]))
+    return {"points": [list(p) for p in pts], "total": total, "stops": stops, "source": "road"}
+
+
+# ---------- 安全ルール ----------
 def fault_cause(s):
     if not s["comms_ok"]:
         return "comms_lost"
@@ -146,9 +257,10 @@ def apply_tick(res, dt, now):
     if s["hold_reason"]:
         return s, ev
 
-    route = json.loads(s["route"])
-    nxt = next((st for st in route["stops"] if st["state"] != "cleared"), None)
-    if nxt and nxt["state"] == "reached":  # 通常は到達しないが、念のため停止を維持
+    route = load_route(s["route"])
+    stops, idx = route["stops"], s["stop_idx"]
+    nxt = stops[idx] if idx < len(stops) else None
+    if nxt and s["stop_reached"]:  # 通常は到達しないが、念のため停止を維持
         s["hold_reason"] = _stop_hold(nxt, s)
         return s, ev
 
@@ -158,8 +270,7 @@ def apply_tick(res, dt, now):
     s["cart_lat"], s["cart_lon"] = pos_at(route, dist)
 
     if nxt and dist >= nxt["dist"]:
-        nxt["state"] = "reached"
-        s["route"] = json.dumps(route)
+        s["stop_reached"] = 1
         reason = _stop_hold(nxt, s)
         s["hold_reason"] = reason
         kind = "corner_stop" if nxt["kind"] == "corner" else "signal_stop"
@@ -172,17 +283,22 @@ def apply_tick(res, dt, now):
     return s, ev
 
 
-def apply_dispatch(res, depot, now):
+def apply_dispatch(res, now):
     s, ev = dict(res), []
     if s["status"] != "reserved":
         raise ActionError("この予約は出発できる状態ではありません")
     cause = fault_cause(s)
     if cause:
         raise ActionError("出発できません: " + HOLD_LABEL[cause])
-    route = build_route(depot, (s["lat"], s["lon"]))
-    s.update(route=json.dumps(route), progress_m=0.0, status="en_route", hold_reason=None,
-             locked=1, unlock_expires_at=None, cart_lat=depot[0], cart_lon=depot[1])
-    ev.append(("dispatch", "notice", "配送を開始しました(シミュレーション)"))
+    if s.get("origin_lat") is None:
+        raise ActionError("出発地が設定されていない予約です")
+    route_json = s.get("route_plan") or json.dumps(
+        build_route((s["origin_lat"], s["origin_lon"]), (s["lat"], s["lon"])))
+    route = load_route(route_json)
+    s.update(route=route_json, progress_m=0.0, status="en_route", hold_reason=None, stop_idx=0, stop_reached=0,
+             locked=1, unlock_expires_at=None, cart_lat=route["points"][0][0], cart_lon=route["points"][0][1])
+    src = "道路に沿った経路" if route.get("source") == "road" else "簡易経路(直線)"
+    ev.append(("dispatch", "notice", f"配送を開始(シミュレーション): {src}、{route['total']:.0f}m、停止ポイント{len(route['stops'])}か所"))
     return s, ev
 
 
@@ -198,17 +314,16 @@ def apply_resume(res, confirmed, now):
     hold = s["hold_reason"]
     if hold.startswith("signal_") and s["signal_state"] != "green":
         raise ActionError("信号が青と確認できないため再開できません")
-    route = json.loads(s["route"])
-    reached = next((st for st in route["stops"] if st["state"] == "reached"), None)
-    if hold in ("corner", "signal_red", "signal_unknown", "signal_green"):
-        if reached:
-            reached["state"] = "cleared"
+    stops, idx = load_route(s["route"])["stops"], s["stop_idx"]
+    at_stop = bool(s["stop_reached"]) and idx < len(stops)
+    if hold in STOP_HOLDS:
+        if at_stop:
+            s["stop_idx"], s["stop_reached"] = idx + 1, 0
         s["hold_reason"] = None
-    elif reached:  # 非常停止などで止まっていても、曲がり角・信号の確認は別途必要
-        s["hold_reason"] = _stop_hold(reached, s)
+    elif at_stop:  # 非常停止などで止まっていても、曲がり角・信号の確認は別途必要
+        s["hold_reason"] = _stop_hold(stops[idx], s)
     else:
         s["hold_reason"] = None
-    s["route"] = json.dumps(route)
     ev.append(("resume", "notice", "管理者が安全を確認し走行再開を許可しました" if not s["hold_reason"]
                else "停止要因は解除。ただし " + HOLD_LABEL[s["hold_reason"]] + " の確認が必要です"))
     return s, ev

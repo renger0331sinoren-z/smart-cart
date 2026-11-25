@@ -20,7 +20,7 @@
     S.busy = true;
     try {
       const mult = parseFloat(document.getElementById('mult').value) || 1;
-      const d = await api('/api/admin/tick', { method: 'POST', body: { run: S.running, dt: mult, after: S.last } });
+      const d = await api('/api/admin/tick', { method: 'POST', body: { run: S.running, dt: mult, after: S.last, sel: S.sel || 0 } });
       S.res = d.reservations;
       handleEvents(d.events);
       render();
@@ -37,12 +37,7 @@
     } catch (_) {}
   }
 
-  function speak(text) {
-    try {
-      const u = new SpeechSynthesisUtterance(text); u.lang = 'ja-JP';
-      window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);
-    } catch (_) {}
-  }
+  const speak = (text) => speakJa(text);  // 台車のスピーカーを模擬(男性の声を優先)
 
   function handleEvents(evs) {
     for (const e of evs) {
@@ -74,30 +69,42 @@
         h('div', { class: 'row' }, h('strong', {}, `#${r.id} ${r.user_name}`), h('span', { class: 'chip st-' + r.status }, r.status_label),
           r.hold_reason ? h('span', { class: 'chip hold' }, '停止中') : null),
         h('div', { class: 'meta' }, `日時: ${fmtLocal(r.scheduled_at)}`),
+        h('div', { class: 'meta' }, `出発地: ${r.origin_address || '-'}`),
         h('div', { class: 'meta' }, `配送先: ${r.address}`),
         h('div', { class: 'meta' }, `荷物: ${r.item_desc}`)));
     }
   }
 
   function select(id) {
-    S.sel = id; S.listSig = ''; S.ctlSig = ''; render();
+    S.sel = id; S.listSig = ''; S.ctlSig = ''; render(); poll();
     const r = cur();
     if (r) map.setView(r.cart_lat != null ? [r.cart_lat, r.cart_lon] : [r.lat, r.lon], Math.max(map.getZoom(), 16));
   }
+
+  const pin = (cls, t) => L.divIcon({ className: '', html: `<div class="pin ${cls}">${t}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+  const pinS = (cls, t) => L.divIcon({ className: '', html: `<div class="pin ${cls}">${t}</div>`, iconSize: [16, 16], iconAnchor: [8, 8] });
 
   function renderMap() {
     layer.clearLayers(); routeLayer.clearLayers();
     for (const r of S.res) {
       if (['cancelled', 'completed'].includes(r.status)) continue;
-      L.circleMarker([r.lat, r.lon], { radius: r.id === S.sel ? 10 : 7, color: '#2563eb', fillColor: '#60a5fa', fillOpacity: 0.9 })
-        .bindTooltip(`#${r.id} ${r.user_name} 配送先`).on('click', () => select(r.id)).addTo(layer);
+      if (r.origin_lat != null) L.marker([r.origin_lat, r.origin_lon], { icon: pin('o', '出') }).bindTooltip(`#${r.id} 出発地: ${r.origin_address || ''}`).on('click', () => select(r.id)).addTo(layer);
+      L.marker([r.lat, r.lon], { icon: pin('d', '着') }).bindTooltip(`#${r.id} ${r.user_name} 配送先: ${r.address}`).on('click', () => select(r.id)).addTo(layer);
       if (r.cart_lat != null && live(r)) {
         L.circleMarker([r.cart_lat, r.cart_lon], { radius: 11, color: r.hold_reason ? '#b91c1c' : '#c2410c', fillColor: r.hold_reason ? '#ef4444' : '#f08a24', fillOpacity: 1 })
           .bindTooltip(`#${r.id} 台車${r.hold_reason ? '(停止中)' : ''}`).on('click', () => select(r.id)).addTo(layer);
       }
     }
     const r = cur();
-    if (r && r.route_points) L.polyline(r.route_points, { color: '#0e7c86', weight: 3, dashArray: '6 6' }).addTo(routeLayer);
+    if (r && r.route_points) {
+      const key = r.id + ':' + r.route_points.length;
+      L.polyline(r.route_points, { color: '#22d3ee', weight: 5, opacity: 0.9 }).addTo(routeLayer);
+      for (const [i, st] of r.stops.entries()) {
+        L.marker([st.lat, st.lon], { icon: pinS((st.kind === 'corner' ? 'corner' : 'sig') + (i < r.stop_idx ? ' done' : ''), ''), zIndexOffset: -100 })
+          .bindTooltip((st.kind === 'corner' ? '曲がり角' : '信号') + `(${Math.round(st.dist)}m地点)`).addTo(routeLayer);
+      }
+      if (S.fitKey !== key) { S.fitKey = key; map.fitBounds(L.latLngBounds(r.route_points).pad(0.2)); }
+    }
   }
 
   function renderLog() {
@@ -122,7 +129,7 @@
     const sig = [r.id, r.status, r.hold_reason, r.locked, r.obstacle, r.comms_ok, r.sensor_ok, r.signal_state].join(':');
     if (sig !== S.ctlSig) { S.ctlSig = sig; buildDetail(box, r); }
     const p = document.getElementById('prog');
-    if (p) p.textContent = r.total_m ? `${r.progress_m} / ${r.total_m} m` : '-';
+    if (p) p.textContent = r.total_m ? `${r.progress_m} / ${r.total_m} m(停止ポイント ${r.stop_idx}/${r.stop_count})` : '-';
     const u = document.getElementById('unlock-remain');
     if (u) u.textContent = r.unlock_remaining_s != null ? `${r.unlock_remaining_s}秒` : '-';
   }
@@ -139,7 +146,9 @@
       r.hold_reason ? h('span', { class: 'chip hold' }, r.hold_label) : null));
     kids.push(h('dl', { class: 'kv' },
       h('dt', {}, '希望日時'), h('dd', {}, fmtLocal(r.scheduled_at)),
+      h('dt', {}, '出発地'), h('dd', {}, r.origin_address || '-'),
       h('dt', {}, '配送先'), h('dd', {}, r.address),
+      h('dt', {}, '経路'), h('dd', {}, r.route_source === 'road' ? '道路に沿った経路' : r.route_source === 'fallback' ? '簡易経路(直線)' : '出発時に作成'),
       h('dt', {}, '荷物'), h('dd', {}, r.item_desc),
       h('dt', {}, '忘れ物'), h('dd', {}, r.forgotten_items || '-'),
       h('dt', {}, '注意事項'), h('dd', {}, r.notes || '-'),
@@ -154,7 +163,7 @@
     kids.push(h('div', { class: 'camwrap' }, cam.canvas, cam.video));
     kids.push(h('div', { class: 'row', style: 'margin-top:.4rem' },
       h('button', { class: 'btn small', onclick: toggleWebcam }, cam.stream ? 'Webカメラ停止' : 'Webカメラで試す'),
-      h('button', { class: 'btn small', onclick: () => speak('カメラの前に顔を近づけてください。配送の確認を行います') }, '🔊 音声テスト')));
+      h('button', { class: 'btn small', onclick: () => { if (!speak('カメラの前に顔を近づけてください。配送の確認を行います')) toast('この端末では音声を再生できません', 'warning'); } }, '🔊 音声テスト')));
 
     // 操作
     const ctl = [];
@@ -253,6 +262,7 @@
     S.sound = !S.sound; e.target.textContent = S.sound ? '🔔 通知音 ON' : '🔕 通知音 OFF';
   });
   document.getElementById('only-sel').addEventListener('change', () => { document.getElementById('log').dataset.sig = ''; renderLog(); });
+  fillVoiceSelect(document.getElementById('voice'));
   poll();
   setInterval(poll, 1000);
 })();

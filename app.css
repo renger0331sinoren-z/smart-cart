@@ -61,3 +61,24 @@ textarea{min-height:76px;resize:vertical}
 .toast{background:#1f2937;color:#fff;padding:.7rem .9rem;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.25);font-size:.9rem}
 .toast.critical{background:var(--red)}.toast.warning{background:var(--amber)}.toast.notice{background:var(--blue)}
 .leaflet-container{font:inherit}
+
+/* 場所検索 */
+.search{position:relative}
+.search-status{margin:.3rem 0 0;min-height:1.2em}
+.search-results{list-style:none;margin:.25rem 0 0;padding:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;max-height:240px;overflow-y:auto}
+.search-results:empty{display:none}
+.search-item{display:flex;justify-content:space-between;gap:.5rem;width:100%;text-align:left;font:inherit;padding:.6rem .8rem;border:0;border-bottom:1px solid var(--line);background:#fff;cursor:pointer;min-height:44px}
+.search-item:hover,.search-item:focus-visible{background:#ecfeff}
+.search-item small{color:var(--muted);white-space:nowrap}
+.spot{border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:.6rem 0;background:#f8fafc}
+.spot h3{margin:0 0 .2rem}
+.pickmode{display:flex;gap:.5rem;margin:.5rem 0}
+.pickmode label{flex:1;display:flex;align-items:center;justify-content:center;gap:.4rem;margin:0;padding:.55rem;border:2px solid var(--line);border-radius:10px;cursor:pointer;background:#fff;font-weight:700}
+.pickmode input{width:auto;margin:0}
+.pickmode label.on{border-color:var(--teal);background:#e6f6f7}
+.pin{display:flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;color:#fff;font-weight:800;font-size:13px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.5)}
+.pin.o{background:#16a34a}.pin.d{background:#2563eb}
+.pin.corner{background:#f59e0b;border-radius:4px;width:16px;height:16px;font-size:10px}
+.pin.sig{background:#dc2626;width:16px;height:16px;font-size:10px}
+.pin.done{background:#94a3b8}
+.topbar .voice{max-width:170px}

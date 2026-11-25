@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}管理画面 | スマート台車配送{% endblock %}
 {% block head %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">{% endblock %}
-{% block bodyattrs %}data-depot-lat="{{ depot[0] }}" data-depot-lon="{{ depot[1] }}" data-radius="{{ radius }}"{% endblock %}
+{% block bodyattrs %}data-depot-lat="{{ depot[0] }}" data-depot-lon="{{ depot[1] }}"{% endblock %}
 {% block body %}
 <header class="topbar">
   <span class="brand">🛒 管理画面</span>
@@ -13,8 +13,11 @@
       <option value="1">等倍</option><option value="5" selected>5倍</option><option value="20">20倍</option><option value="60">60倍</option>
     </select>
   </label>
+  <label class="row" style="margin:0;font-weight:500">音声
+    <select id="voice" class="voice" aria-label="案内音声"></select>
+  </label>
   <button id="sound-btn" class="btn small">🔔 通知音 ON</button>
-  <button class="btn small" onclick="logout()">ログアウト</button>
+  <button class="btn small" data-logout>ログアウト</button>
 </header>
 <main class="admin-grid">
   <div class="col">
@@ -28,7 +31,7 @@
     <section class="card">
       <h2>地図</h2>
       <div id="map" class="map" style="height:420px"></div>
-      <p class="hint">灰: 出発地 / 青: 配送先 / オレンジ: 台車 / 選択中の予約は経路を表示</p>
+      <p class="hint">緑「出」: 出発地 / 青「着」: 配送先 / オレンジ: 台車 / 選択中の予約は道路経路と停止ポイント(黄◼: 曲がり角、赤●: 信号)を表示</p>
     </section>
     <section class="card">
       <div class="row"><h2 style="margin:0">通知・履歴</h2>

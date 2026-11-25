@@ -1,7 +1,9 @@
 (function () {
   const pickMap = makeMap('pick-map');
   const liveMap = makeMap('live-map');
-  let pickMarker = null, picked = null, selected = null;
+  const pin = (cls, t) => L.divIcon({ className: '', html: `<div class="pin ${cls}">${t}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+  const P = { origin: null, dest: null }, markers = {};
+  let selected = null, mode = 'origin';
   const layers = L.layerGroup().addTo(liveMap);
   let cache = [];
 
@@ -9,34 +11,58 @@
   const f = document.getElementById('res-form');
   const pad = (n) => String(n).padStart(2, '0');
   const toLocal = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  const soon = new Date(Date.now() + 3600e3);
-  f.scheduled_at.value = toLocal(soon);
+  f.scheduled_at.value = toLocal(new Date(Date.now() + 3600e3));
   f.scheduled_at.min = toLocal(new Date());
 
+  const NAME_FIELD = { origin: f.origin_address, dest: f.address };
+  const INFO = { origin: document.getElementById('origin-info'), dest: document.getElementById('dest-info') };
+
+  function setPoint(kind, lat, lon, name, fly) {
+    P[kind] = { lat, lon };
+    const ll = [lat, lon], icon = pin(kind === 'origin' ? 'o' : 'd', kind === 'origin' ? '出' : '着');
+    if (markers[kind]) markers[kind].setLatLng(ll); else markers[kind] = L.marker(ll, { icon }).addTo(pickMap);
+    INFO[kind].textContent = `選択済み(${lat.toFixed(5)}, ${lon.toFixed(5)})`;
+    if (name && !NAME_FIELD[kind].value.trim()) NAME_FIELD[kind].value = name;
+    if (fly) pickMap.setView(ll, Math.max(pickMap.getZoom(), 16));
+    else if (P.origin && P.dest) pickMap.fitBounds(L.latLngBounds([[P.origin.lat, P.origin.lon], [P.dest.lat, P.dest.lon]]).pad(0.3));
+  }
+
+  document.getElementById('origin-search').append(makeSearch('出発地を検索(例: みやざき、宮崎駅)', (p) => { NAME_FIELD.origin.value = p.name; setPoint('origin', p.lat, p.lon, p.name, true); }));
+  document.getElementById('dest-search').append(makeSearch('配送先を検索(例: みやざき、宮崎市役所)', (p) => { NAME_FIELD.dest.value = p.name; setPoint('dest', p.lat, p.lon, p.name, true); }));
+
+  document.querySelectorAll('input[name=pickmode]').forEach((r) => r.addEventListener('change', () => {
+    mode = r.value;
+    document.getElementById('pm-origin').classList.toggle('on', mode === 'origin');
+    document.getElementById('pm-dest').classList.toggle('on', mode === 'dest');
+  }));
   pickMap.on('click', (e) => {
-    picked = { lat: e.latlng.lat, lon: e.latlng.lng };
-    if (pickMarker) pickMarker.setLatLng(e.latlng);
-    else pickMarker = L.circleMarker(e.latlng, { radius: 9, color: '#2563eb', fillColor: '#3b82f6', fillOpacity: 0.9 }).addTo(pickMap);
-    document.getElementById('pick-info').textContent = `位置: 選択済み(${picked.lat.toFixed(5)}, ${picked.lon.toFixed(5)})`;
+    setPoint(mode, e.latlng.lat, e.latlng.lng, '', false);
+    if (mode === 'origin' && !P.dest) { mode = 'dest'; document.querySelector('input[name=pickmode][value=dest]').click(); }
   });
 
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('res-error');
     errEl.textContent = '';
-    if (!picked) { errEl.textContent = '地図をタップして配送先を選んでください'; return; }
+    if (!P.origin) { errEl.textContent = '出発地を検索するか、地図をタップして選んでください'; return; }
+    if (!P.dest) { errEl.textContent = '配送先を検索するか、地図をタップして選んでください'; return; }
+    const btn = f.querySelector('button[type=submit]');
+    btn.disabled = true; btn.textContent = '道路経路を確認しています…';
     try {
       await api('/api/reservations', {
         method: 'POST',
         body: {
-          scheduled_at: f.scheduled_at.value, address: f.address.value, lat: picked.lat, lon: picked.lon,
+          scheduled_at: f.scheduled_at.value, address: f.address.value, lat: P.dest.lat, lon: P.dest.lon,
+          origin_address: f.origin_address.value, origin_lat: P.origin.lat, origin_lon: P.origin.lon,
           item_desc: f.item_desc.value, forgotten_items: f.forgotten_items.value, notes: f.notes.value,
         },
       });
       toast('予約を受け付けました', 'notice');
-      f.address.value = f.item_desc.value = f.forgotten_items.value = f.notes.value = '';
+      f.address.value = f.origin_address.value = f.item_desc.value = f.forgotten_items.value = f.notes.value = '';
+      for (const k of ['origin', 'dest']) { if (markers[k]) { pickMap.removeLayer(markers[k]); delete markers[k]; } P[k] = null; INFO[k].textContent = '未選択(検索するか、地図をタップ)'; }
       refresh();
     } catch (ex) { errEl.textContent = ex.message; }
+    finally { btn.disabled = false; btn.textContent = 'この内容で予約する'; }
   });
 
   function banner(r) {
@@ -60,7 +86,8 @@
           h('strong', {}, `予約 #${r.id}`),
           h('span', { class: 'chip st-' + r.status }, r.status_label)),
         h('div', { class: 'meta' }, `日時: ${fmtLocal(r.scheduled_at)}`),
-        h('div', { class: 'meta' }, `場所: ${r.address}`),
+        h('div', { class: 'meta' }, `出発地: ${r.origin_address || '-'}`),
+        h('div', { class: 'meta' }, `配送先: ${r.address}`),
         h('div', { class: 'meta' }, `荷物: ${r.item_desc}`),
         r.forgotten_items ? h('div', { class: 'meta' }, `忘れ物: ${r.forgotten_items}`) : null,
         r.notes ? h('div', { class: 'meta' }, `注意事項: ${r.notes}`) : null,
@@ -71,7 +98,8 @@
     layers.clearLayers();
     for (const r of cache) {
       if (['cancelled', 'completed'].includes(r.status)) continue;
-      L.circleMarker([r.lat, r.lon], { radius: 8, color: '#2563eb', fillColor: '#60a5fa', fillOpacity: 0.9 }).bindTooltip(`#${r.id} 配送先`).addTo(layers);
+      if (r.origin_lat != null) L.marker([r.origin_lat, r.origin_lon], { icon: pin('o', '出') }).bindTooltip(`#${r.id} 出発地`).addTo(layers);
+      L.marker([r.lat, r.lon], { icon: pin('d', '着') }).bindTooltip(`#${r.id} 配送先`).addTo(layers);
       if (r.cart_lat != null) L.circleMarker([r.cart_lat, r.cart_lon], { radius: 10, color: '#c2410c', fillColor: '#f08a24', fillOpacity: 1 }).bindTooltip(`#${r.id} 台車`).addTo(layers);
     }
   }

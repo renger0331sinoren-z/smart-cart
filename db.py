@@ -107,6 +107,8 @@ def init_db():
             locked INTEGER NOT NULL DEFAULT 1, unlock_expires_at TEXT,
             obstacle INTEGER NOT NULL DEFAULT 0, comms_ok INTEGER NOT NULL DEFAULT 1,
             sensor_ok INTEGER NOT NULL DEFAULT 1, signal_state TEXT NOT NULL DEFAULT 'red',
+            origin_address TEXT, origin_lat DOUBLE PRECISION, origin_lon DOUBLE PRECISION,
+            route_plan TEXT, stop_idx INTEGER NOT NULL DEFAULT 0, stop_reached INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
         f"""CREATE TABLE IF NOT EXISTS events (
             id {pk}, ts TEXT NOT NULL, reservation_id INTEGER, actor TEXT NOT NULL,
@@ -119,3 +121,15 @@ def init_db():
             tx.execute("SELECT pg_advisory_xact_lock(7123001)")
         for s in stmts:
             tx.execute(s)
+        # 既存DBへの列追加(前の版で作られたDBを壊さずに更新する)
+        new_cols = [("origin_address", "TEXT"), ("origin_lat", "DOUBLE PRECISION"), ("origin_lon", "DOUBLE PRECISION"),
+                    ("route_plan", "TEXT"), ("stop_idx", "INTEGER NOT NULL DEFAULT 0"),
+                    ("stop_reached", "INTEGER NOT NULL DEFAULT 0")]
+        if IS_PG:
+            for name, typ in new_cols:
+                tx.execute(f"ALTER TABLE reservations ADD COLUMN IF NOT EXISTS {name} {typ}")
+        else:
+            have = {r["name"] for r in tx.query("PRAGMA table_info(reservations)")}
+            for name, typ in new_cols:
+                if name not in have:
+                    tx.execute(f"ALTER TABLE reservations ADD COLUMN {name} {typ}")

@@ -12,13 +12,14 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
 import db
+import geo
 import hardware
 import sim
 
 IS_RENDER = os.environ.get("RENDER") == "true"
 ADMIN_NAME = (os.environ.get("ADMIN_NAME") or "admin").strip()
 DEPOT = (float(os.environ.get("DEPOT_LAT", "35.6812")), float(os.environ.get("DEPOT_LON", "139.7671")))
-SERVICE_RADIUS_M = float(os.environ.get("SERVICE_RADIUS_M", "3000"))
+MAX_TRIP_M = float(os.environ.get("MAX_TRIP_M", "30000"))  # 出発地と配送先の直線距離の上限(シミュレーションが長くなりすぎないように)
 TZ_OFFSET_H = int(os.environ.get("TZ_OFFSET_H", "9"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -55,7 +56,7 @@ if IS_RENDER:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
 SIM_COLS = ["status", "hold_reason", "cart_lat", "cart_lon", "progress_m", "route", "locked",
-            "unlock_expires_at", "obstacle", "comms_ok", "sensor_ok", "signal_state"]
+            "unlock_expires_at", "obstacle", "comms_ok", "sensor_ok", "signal_state", "stop_idx", "stop_reached"]
 DUMMY_HASH = generate_password_hash("dummy-password-for-timing")
 FAILS = {}  # (ip, name) -> [timestamps]  ※ワーカーごとの簡易制限
 
@@ -121,7 +122,7 @@ def headers(resp):
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; script-src 'self' https://unpkg.com; "
         "style-src 'self' 'unsafe-inline' https://unpkg.com; "
-        "img-src 'self' data: https://tile.openstreetmap.org https://unpkg.com; "
+        "img-src 'self' data: https://tile.openstreetmap.org https://cyberjapandata.gsi.go.jp https://unpkg.com; "
         "media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'")
     if IS_RENDER:
         resp.headers["Strict-Transport-Security"] = "max-age=31536000"
@@ -147,6 +148,9 @@ def ensure_admin():
 
 db.init_db()
 ensure_admin()
+with db.transaction() as _tx:
+    _tx.execute("UPDATE reservations SET origin_lat=?, origin_lon=?, origin_address='出発地(旧データ)' WHERE origin_lat IS NULL",
+                (DEPOT[0], DEPOT[1]))
 
 
 # ---------- ページ ----------
@@ -170,7 +174,7 @@ def user_page():
         return redirect("/login")
     if u["role"] == "admin":
         return redirect("/admin")
-    return render_template("user.html", user=u, depot=DEPOT, radius=SERVICE_RADIUS_M)
+    return render_template("user.html", user=u, depot=DEPOT)
 
 
 @app.get("/admin")
@@ -180,7 +184,7 @@ def admin_page():
         return redirect("/login")
     if u["role"] != "admin":
         return redirect("/app")
-    return render_template("admin.html", user=u, depot=DEPOT, radius=SERVICE_RADIUS_M,
+    return render_template("admin.html", user=u, depot=DEPOT,
                            max_speed=sim.MAX_SPEED_KMH, hw=hardware.REAL_HARDWARE_ENABLED)
 
 
@@ -280,6 +284,7 @@ def user_view(r):
         remaining = max(0, int((sim.parse_iso(r["unlock_expires_at"]) - sim.now_utc()).total_seconds()))
     return {
         "id": r["id"], "scheduled_at": r["scheduled_at"], "address": r["address"], "lat": r["lat"], "lon": r["lon"],
+        "origin_address": r.get("origin_address"), "origin_lat": r.get("origin_lat"), "origin_lon": r.get("origin_lon"),
         "item_desc": r["item_desc"], "forgotten_items": r["forgotten_items"], "notes": r["notes"],
         "status": r["status"], "status_label": sim.STATUS_LABEL.get(r["status"], r["status"]),
         "paused": bool(r["hold_reason"]) and r["status"] == "en_route",
@@ -289,8 +294,9 @@ def user_view(r):
     }
 
 
-def admin_view(r):
-    route = json.loads(r["route"]) if r["route"] else None
+def admin_view(r, with_route=False):
+    plan = r["route"] or r.get("route_plan")
+    route = json.loads(plan) if plan else None
     v = user_view(r)
     v.update({
         "user_name": r.get("user_name"), "user_id": r["user_id"],
@@ -299,21 +305,33 @@ def admin_view(r):
         "obstacle": bool(r["obstacle"]), "comms_ok": bool(r["comms_ok"]), "sensor_ok": bool(r["sensor_ok"]),
         "signal_state": r["signal_state"], "progress_m": round(r["progress_m"], 1),
         "total_m": round(route["total"], 1) if route else None,
-        "route_points": route["points"] if route else None,
-        "stops": route["stops"] if route else [],
+        "route_source": route.get("source") if route else None,
+        "stop_idx": r["stop_idx"], "stop_count": len(route["stops"]) if route else 0,
+        "route_points": route["points"] if (route and with_route) else None,  # 点が多いので選択中の予約だけ送る
+        "stops": route["stops"] if (route and with_route) else [],
     })
     return v
 
 
 # ---------- 利用者API ----------
+def _point(d, klat, klon, label):
+    try:
+        lat, lon = float(d.get(klat)), float(d.get(klon))
+    except (TypeError, ValueError):
+        raise ValueError(f"{label}を地図または検索で選択してください")
+    if not (math.isfinite(lat) and math.isfinite(lon) and 20 <= lat <= 46 and 122 <= lon <= 154):
+        raise ValueError(f"{label}は日本国内で選択してください")
+    return lat, lon
+
+
 def parse_reservation(d):
-    def text(k, maxlen, required=False):
+    def text(k, label, maxlen, required=False):
         v = d.get(k, "")
         v = v.strip() if isinstance(v, str) else ""
         if required and not v:
-            raise ValueError(f"{k}")
+            raise ValueError(f"{label}を入力してください")
         if len(v) > maxlen:
-            raise ValueError(f"{k}が長すぎます")
+            raise ValueError(f"{label}が長すぎます")
         return v
     try:
         sched = d.get("scheduled_at", "")
@@ -323,26 +341,41 @@ def parse_reservation(d):
     now_local = sim.now_utc().replace(tzinfo=None) + timedelta(hours=TZ_OFFSET_H)
     if t < now_local - timedelta(minutes=5) or t > now_local + timedelta(days=60):
         raise ValueError("希望日時は現在から60日以内で指定してください")
-    try:
-        lat, lon = float(d.get("lat")), float(d.get("lon"))
-    except (TypeError, ValueError):
-        raise ValueError("地図をクリックして配送先を選択してください")
-    if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
-        raise ValueError("配送先の位置が不正です")
-    dist = sim.haversine(DEPOT, (lat, lon))
-    if dist > SERVICE_RADIUS_M:
-        raise ValueError(f"配送エリア外です(出発地から{int(SERVICE_RADIUS_M)}m以内)")
+    olat, olon = _point(d, "origin_lat", "origin_lon", "出発地")
+    lat, lon = _point(d, "lat", "lon", "配送先")
+    dist = sim.haversine((olat, olon), (lat, lon))
     if dist < 30:
-        raise ValueError("出発地に近すぎます(30m以上離れた場所を選んでください)")
-    out = {"scheduled_at": sched, "lat": lat, "lon": lon}
-    for k, mx, req in (("address", 200, True), ("item_desc", 500, True), ("forgotten_items", 500, False), ("notes", 500, False)):
-        try:
-            out[k] = text(k, mx, req)
-        except ValueError as e:
-            labels = {"address": "配送先の場所", "item_desc": "荷物の内容"}
-            msg = str(e)
-            raise ValueError(f"{labels.get(msg, msg)}を入力してください" if msg in labels else msg)
+        raise ValueError("出発地と配送先が近すぎます(30m以上離してください)")
+    if dist > MAX_TRIP_M:
+        raise ValueError(f"出発地と配送先が遠すぎます(直線で{int(MAX_TRIP_M / 1000)}km以内)")
+    out = {"scheduled_at": sched, "lat": lat, "lon": lon, "origin_lat": olat, "origin_lon": olon}
+    out["origin_address"] = text("origin_address", "出発地の名前", 200, True)
+    out["address"] = text("address", "配送先の場所", 200, True)
+    out["item_desc"] = text("item_desc", "荷物の内容", 500, True)
+    out["forgotten_items"] = text("forgotten_items", "忘れ物の詳細", 500)
+    out["notes"] = text("notes", "注意事項", 500)
     return out
+
+
+def make_plan(origin, dest):
+    """道路に沿った走行プランを作る。 戻り値: (plan_json, メモ)。道路が見つからなければ ValueError。
+    外部サービスに接続できないときは (None, メモ) を返し、出発時にもう一度試す。"""
+    try:
+        pts, _dist, snap = geo.road_route(origin, dest)
+    except geo.NoRoute:
+        raise ValueError("出発地と配送先を結ぶ道が見つかりません。道路の近くの場所を選んでください")
+    except geo.ServiceError:
+        return None, "経路サービスに接続できなかったため、出発時に再度取得します"
+    if snap > 300:
+        raise ValueError("選んだ場所が道路から遠すぎます(300m以上)。道路の近くを選んでください")
+    try:
+        signals = geo.traffic_signals(pts)
+        note = f"信号機{len(signals)}か所を地図データから取得"
+    except geo.ServiceError:
+        signals, note = [], "信号機の位置を取得できなかったため、曲がり角のみで停止します"
+    plan = sim.plan_from_geometry(pts, signals)
+    plan["signals_known"] = bool(signals) or note.startswith("信号機")
+    return json.dumps(plan), note
 
 
 @app.post("/api/reservations")
@@ -352,6 +385,7 @@ def create_reservation(u):
         return err("管理者アカウントでは予約できません", 403)
     try:
         d = parse_reservation(request.get_json(silent=True) or {})
+        plan, note = make_plan((d["origin_lat"], d["origin_lon"]), (d["lat"], d["lon"]))
     except ValueError as e:
         return err(str(e))
     with db.transaction() as tx:
@@ -361,12 +395,13 @@ def create_reservation(u):
             return err("進行中の予約が多すぎます(最大10件)")
         now = iso_now()
         rid = tx.insert(
-            "INSERT INTO reservations(user_id,scheduled_at,address,lat,lon,item_desc,forgotten_items,notes,created_at,updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO reservations(user_id,scheduled_at,address,lat,lon,item_desc,forgotten_items,notes,"
+            "origin_address,origin_lat,origin_lon,route_plan,created_at,updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (u["id"], d["scheduled_at"], d["address"], d["lat"], d["lon"], d["item_desc"],
-             d["forgotten_items"], d["notes"], now, now))
+             d["forgotten_items"], d["notes"], d["origin_address"], d["origin_lat"], d["origin_lon"], plan, now, now))
         log_event(tx, rid, f"user:{u['name']}", "reservation_created", "notice",
-                  f"{d['scheduled_at']} / {d['address']}")
+                  f"{d['scheduled_at']} / {d['origin_address']} → {d['address']} / {note}")
     return jsonify(ok=True, id=rid), 201
 
 
@@ -392,8 +427,29 @@ def cancel_reservation(u, rid):
     return jsonify(ok=True)
 
 
+# ---------- 場所検索 ----------
+SEARCH_LOG = {}  # uid -> [timestamps]
+
+
+@app.get("/api/search")
+@login_required
+def api_search(u):
+    q = " ".join((request.args.get("q") or "").split())
+    if len(q) < 2 or len(q) > 60:
+        return jsonify(results=[])
+    now = time.time()
+    hist = [t for t in SEARCH_LOG.get(u["id"], []) if now - t < 60]
+    if len(hist) >= 40:
+        return err("検索の回数が多すぎます。少し待ってください", 429)
+    SEARCH_LOG[u["id"]] = hist + [now]
+    try:
+        return jsonify(results=geo.search_places(q))
+    except geo.ServiceError:
+        return err("検索サービスに接続できませんでした。地図をタップして選ぶこともできます", 503)
+
+
 # ---------- 管理者API ----------
-def overview(after):
+def overview(after, sel=0):
     with db.reader() as tx:
         rows = tx.query("SELECT r.*, u.name AS user_name FROM reservations r JOIN users u ON u.id=r.user_id "
                         "ORDER BY r.id DESC LIMIT 200")
@@ -401,7 +457,7 @@ def overview(after):
             evs = tx.query("SELECT * FROM events WHERE id>? ORDER BY id ASC LIMIT 300", (after,))
         else:
             evs = list(reversed(tx.query("SELECT * FROM events ORDER BY id DESC LIMIT 200")))
-    return {"reservations": [admin_view(r) for r in rows], "events": evs}
+    return {"reservations": [admin_view(r, r["id"] == sel) for r in rows], "events": evs}
 
 
 @app.post("/api/admin/tick")
@@ -412,6 +468,7 @@ def admin_tick(u):
     try:
         dt = float(d.get("dt", 0))
         after = int(d.get("after", 0))
+        sel = int(d.get("sel") or 0)
     except (TypeError, ValueError):
         return err("不正な値です")
     dt = max(0.0, min(dt, sim.MAX_DT_S)) if d.get("run") else 0.0
@@ -419,12 +476,12 @@ def admin_tick(u):
         ids = [r["id"] for r in tx.query("SELECT id FROM reservations WHERE status IN ('en_route','arrived','unlock_pending','unlocked')")]
     for rid in ids:
         mutate(rid, lambda r: sim.apply_tick(r, dt, sim.now_utc()), "system")
-    out = overview(after)
+    out = overview(after, sel)
     out["max_speed_kmh"] = sim.MAX_SPEED_KMH
     return jsonify(out)
 
 
-def _a_dispatch(r, b, u): return sim.apply_dispatch(r, DEPOT, sim.now_utc())
+def _a_dispatch(r, b, u): return sim.apply_dispatch(r, sim.now_utc())
 def _a_resume(r, b, u): return sim.apply_resume(r, b.get("confirmed") is True, sim.now_utc())
 def _a_estop(r, b, u): return sim.apply_estop(r, sim.now_utc())
 def _a_sim(r, b, u): return sim.apply_sim(r, {k: v for k, v in b.items()}, sim.now_utc())
@@ -437,6 +494,21 @@ ADMIN_ACTIONS = {"dispatch": _a_dispatch, "resume": _a_resume, "estop": _a_estop
                  "face-detected": _a_face, "unlock": _a_unlock, "complete": _a_complete}
 
 
+def ensure_plan(rid):
+    """出発前に道路経路が未取得なら取得する(取得できなければ簡易経路になる)。"""
+    with db.reader() as tx:
+        r = tx.one("SELECT status, route_plan, origin_lat, origin_lon, lat, lon FROM reservations WHERE id=?", (rid,))
+    if not r or r["status"] != "reserved" or r["route_plan"] or r["origin_lat"] is None:
+        return
+    try:
+        plan, _ = make_plan((r["origin_lat"], r["origin_lon"]), (r["lat"], r["lon"]))
+    except ValueError:
+        return
+    if plan:
+        with db.transaction() as tx:
+            tx.execute("UPDATE reservations SET route_plan=? WHERE id=? AND route_plan IS NULL", (plan, rid))
+
+
 @app.post("/api/admin/reservations/<int:rid>/<action>")
 @admin_required
 def admin_action(u, rid, action):
@@ -444,6 +516,8 @@ def admin_action(u, rid, action):
     if not fn:
         return err("不明な操作です", 404)
     body = request.get_json(silent=True) or {}
+    if action == "dispatch":
+        ensure_plan(rid)
     new, e = mutate(rid, lambda r: fn(r, body, u), f"admin:{u['name']}")
     if isinstance(e, LookupError):
         return err(str(e), 404)
