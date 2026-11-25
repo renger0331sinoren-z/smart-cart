@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Flask, jsonify, redirect, render_template, request, session
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_from_directory, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -21,8 +21,24 @@ DEPOT = (float(os.environ.get("DEPOT_LAT", "35.6812")), float(os.environ.get("DE
 SERVICE_RADIUS_M = float(os.environ.get("SERVICE_RADIUS_M", "3000"))
 TZ_OFFSET_H = int(os.environ.get("TZ_OFFSET_H", "9"))
 
-app = Flask(__name__)
-secret = os.environ.get("SECRET_KEY")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# templates/ が無く、全ファイルが同じ階層に置かれている場合(GitHubのアップロードでフォルダが崩れた時)も動かす
+FLAT = not os.path.isdir(os.path.join(BASE_DIR, "templates"))
+STATIC_FILES = {"app.css", "admin.js", "common.js", "login.js", "user.js"}
+app = Flask(__name__, template_folder=BASE_DIR if FLAT else "templates", static_folder=None)
+
+
+@app.get("/static/<path:name>")
+def static_files(name):
+    if FLAT:
+        base = os.path.basename(name)
+        if base not in STATIC_FILES:
+            abort(404)
+        return send_from_directory(BASE_DIR, base)
+    return send_from_directory(os.path.join(BASE_DIR, "static"), name)
+
+
+secret =os.environ.get("SECRET_KEY")
 if not secret:
     if IS_RENDER:
         raise RuntimeError("SECRET_KEY が未設定です")
