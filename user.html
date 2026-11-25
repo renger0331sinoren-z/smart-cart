@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}配送予約 | スマート台車配送{% endblock %}
+{% block head %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">{% endblock %}
+{% block bodyattrs %}data-depot-lat="{{ depot[0] }}" data-depot-lon="{{ depot[1] }}" data-radius="{{ radius }}"{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">🛒 スマート台車配送</span>
+  <span class="badge sim">シミュレーション版</span>
+  <span class="spacer"></span>
+  <span>{{ user.name }} さん</span>
+  <button class="btn small" onclick="logout()">ログアウト</button>
+</header>
+<main class="page">
+  <section class="card">
+    <h2>新しい配送予約</h2>
+    <form id="res-form">
+      <label>届けてほしい日時
+        <input name="scheduled_at" type="datetime-local" required>
+      </label>
+      <label>配送先の場所(目印・部屋番号など)
+        <input name="address" type="text" maxlength="200" required placeholder="例: ○○ビル 3階 305号室 前">
+      </label>
+      <p class="hint">下の地図をタップして、配送先の位置を選んでください(円の中が配送エリアです)。</p>
+      <div id="pick-map" class="map"></div>
+      <p id="pick-info" class="hint">位置: 未選択</p>
+      <label>荷物の内容
+        <textarea name="item_desc" maxlength="500" required placeholder="例: 書類の入った封筒(A4)"></textarea>
+      </label>
+      <label>忘れ物の詳細(任意)
+        <textarea name="forgotten_items" maxlength="500" placeholder="例: 黒い折りたたみ傘を会議室に忘れました"></textarea>
+      </label>
+      <label>注意事項(任意)
+        <textarea name="notes" maxlength="500" placeholder="例: インターホンは鳴らさないでください"></textarea>
+      </label>
+      <p id="res-error" class="error" role="alert"></p>
+      <button class="btn primary block" type="submit">この内容で予約する</button>
+    </form>
+  </section>
+  <section class="card">
+    <h2>あなたの予約と配送状況</h2>
+    <div id="live-map" class="map"></div>
+    <p class="hint">オレンジの丸が台車、青い丸が配送先です。</p>
+    <div id="res-list"></div>
+  </section>
+</main>
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/js/user.js"></script>
+{% endblock %}

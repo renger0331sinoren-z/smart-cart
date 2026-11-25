@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}管理画面 | スマート台車配送{% endblock %}
+{% block head %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">{% endblock %}
+{% block bodyattrs %}data-depot-lat="{{ depot[0] }}" data-depot-lon="{{ depot[1] }}" data-radius="{{ radius }}"{% endblock %}
+{% block body %}
+<header class="topbar">
+  <span class="brand">🛒 管理画面</span>
+  <span class="badge sim">シミュレーション / 実機制御: {{ '有効' if hw else '無効' }}</span>
+  <span class="spacer"></span>
+  <button id="run-btn" class="btn small">▶ 走行シミュレーション開始</button>
+  <label class="row" style="margin:0;font-weight:500">速度
+    <select id="mult" aria-label="シミュレーション倍速">
+      <option value="1">等倍</option><option value="5" selected>5倍</option><option value="20">20倍</option><option value="60">60倍</option>
+    </select>
+  </label>
+  <button id="sound-btn" class="btn small">🔔 通知音 ON</button>
+  <button class="btn small" onclick="logout()">ログアウト</button>
+</header>
+<main class="admin-grid">
+  <div class="col">
+    <section class="card">
+      <h2>予約一覧</h2>
+      <p class="hint">最高速度 {{ max_speed }}km/h(上限固定)。倍速は時間の進み方のみで、速度上限は変わりません。</p>
+      <div id="list"></div>
+    </section>
+  </div>
+  <div class="col">
+    <section class="card">
+      <h2>地図</h2>
+      <div id="map" class="map" style="height:420px"></div>
+      <p class="hint">灰: 出発地 / 青: 配送先 / オレンジ: 台車 / 選択中の予約は経路を表示</p>
+    </section>
+    <section class="card">
+      <div class="row"><h2 style="margin:0">通知・履歴</h2>
+        <label class="row" style="margin:0;font-weight:500"><input type="checkbox" id="only-sel" style="width:auto;margin:0"> 選択中の予約のみ</label></div>
+      <div id="log" class="log"></div>
+    </section>
+  </div>
+  <div class="col">
+    <section class="card" id="detail"><p class="muted">左の一覧から予約を選択してください。</p></section>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/js/admin.js"></script>
+{% endblock %}

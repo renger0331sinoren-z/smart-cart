@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}ログイン | スマート台車配送{% endblock %}
+{% block body %}
+<main class="login-wrap">
+  <div class="card login-card">
+    <div class="brand big"><span class="logo">🛒</span> スマート台車配送</div>
+    <p class="muted">お名前とパスワード(8文字以上)を入力してください。初めての名前は、そのまま新規登録されます。</p>
+    <form id="login-form" autocomplete="on">
+      <label>お名前
+        <input name="name" type="text" maxlength="30" required autocomplete="username">
+      </label>
+      <label>パスワード(8文字以上)
+        <input name="password" type="password" minlength="8" maxlength="128" required autocomplete="current-password">
+      </label>
+      <p id="login-error" class="error" role="alert"></p>
+      <button class="btn primary block" type="submit">ログイン / はじめて利用</button>
+    </form>
+    <p class="note">※ 現在はシミュレーション版です。実際の台車は動作しません。</p>
+  </div>
+</main>
+{% endblock %}
+{% block scripts %}<script src="/static/js/login.js"></script>{% endblock %}
