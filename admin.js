@@ -4,7 +4,8 @@
   const layer = L.layerGroup().addTo(map);
   const routeLayer = L.layerGroup().addTo(map);
   const SIGNAL = { red: '赤', green: '青', unknown: '確認不可' };
-  const live = (r) => ['en_route', 'arrived', 'unlock_pending', 'unlocked'].includes(r.status);
+  const live = (r) => ['en_route', 'arrived', 'unlock_pending', 'unlocked', 'returning'].includes(r.status);
+  const moving = (r) => ['en_route', 'returning'].includes(r.status);
   const cur = () => S.res.find((r) => r.id === S.sel);
 
   // ---------- 操作 ----------
@@ -168,7 +169,7 @@
     // 操作
     const ctl = [];
     if (r.status === 'reserved') ctl.push(h('button', { class: 'btn primary', onclick: () => act(r.id, 'dispatch') }, '配送を開始(シミュレーション)'));
-    if (r.status === 'en_route') {
+    if (moving(r)) {
       if (r.hold_reason) ctl.push(h('button', { class: 'btn ok', onclick: () => {
         if (confirm('カメラ映像と位置情報で周囲の安全(人・車・障害物・信号)を確認しました。走行を再開しますか?')) act(r.id, 'resume', { confirmed: true });
       } }, '安全確認OK → 再開を許可'));
@@ -190,7 +191,7 @@
     if (ctl.length) { kids.push(h('h3', { style: 'margin-top:.8rem' }, '操作')); kids.push(h('div', { class: 'row' }, ctl)); }
 
     // 模擬センサー入力
-    if (['en_route', 'arrived', 'unlock_pending', 'unlocked', 'reserved'].includes(r.status)) {
+    if (['en_route', 'arrived', 'unlock_pending', 'unlocked', 'reserved', 'returning'].includes(r.status)) {
       kids.push(h('h3', { style: 'margin-top:.8rem' }, '模擬センサー入力(テスト用)'));
       kids.push(h('div', { class: 'toggles' },
         toggle(r, '障害物を検知(人・車・物)', 'obstacle', r.obstacle, false),
@@ -220,7 +221,7 @@
     g.fillStyle = '#0b1220'; g.fillRect(0, 0, W, H);
     // 路面
     g.fillStyle = '#1e293b'; g.beginPath(); g.moveTo(W * 0.35, H * 0.35); g.lineTo(W * 0.65, H * 0.35); g.lineTo(W, H); g.lineTo(0, H); g.fill();
-    const moving = r.status === 'en_route' && !r.hold_reason;
+    const moving = ['en_route', 'returning'].includes(r.status) && !r.hold_reason;
     g.strokeStyle = '#94a3b8'; g.lineWidth = 3;
     for (let i = 0; i < 6; i++) {
       const k = ((i + (moving ? t * 0.8 : 0)) % 6) / 6, y = H * 0.35 + (H * 0.65) * k * k, w = 4 + k * 14;
@@ -238,7 +239,7 @@
       g.fillRect(W / 2 - 70 * s, H * 0.4 + 40 * s, 140 * s, 140 * s);
     }
     // 信号(模擬)
-    if (r.status === 'en_route') {
+    if (['en_route', 'returning'].includes(r.status)) {
       g.fillStyle = { red: '#ef4444', green: '#22c55e', unknown: '#64748b' }[r.signal_state]; g.beginPath(); g.arc(W - 40, 40, 14, 0, 7); g.fill();
     }
     g.fillStyle = '#e2e8f0'; g.font = '14px monospace';

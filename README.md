@@ -18,7 +18,8 @@ python tests/test_flow.py                              # 安全ルール・権�
 ## 環境変数
 `ADMIN_NAME`(既定 admin) / `ADMIN_PASSWORD` / `SECRET_KEY` / `DATABASE_URL` /
 `DEPOT_LAT`, `DEPOT_LON`(地図を最初に開く位置) / `MAX_TRIP_M`(出発地〜配送先の直線距離の上限・既定30000) /
-`GEO_CONTACT`(外部地図サービスへ名乗る連絡先。メールアドレス推奨)
+`GEO_CONTACT`(外部地図サービスへ名乗る連絡先。メールアドレス推奨) /
+`BASE_ADDRESS`(配送後に自動で戻る基地の住所・既定: 宮崎県宮崎市波島一丁目11番6号) / `BASE_LAT`, `BASE_LON`(基地の座標。住所検索で見つからないときに直接指定)
 
 ## 地図・検索・経路(外部の無料公開サービス)
 - 地図: 国土地理院の航空写真・地理院地図(出典表示つき)/ 場所検索: 国土地理院 + OpenStreetMap(Nominatim)

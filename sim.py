@@ -15,7 +15,8 @@ MAX_SPEED_KMH = 6.0  # 希望最高速度(上限として固定)
 MAX_SPEED_MS = MAX_SPEED_KMH * 1000 / 3600
 UNLOCK_WINDOW_S = 30
 MAX_DT_S = 60.0
-ACTIVE = ("en_route", "arrived", "unlock_pending", "unlocked")
+ACTIVE = ("en_route", "arrived", "unlock_pending", "unlocked", "returning")
+MOVING = ("en_route", "returning")  # 走行中(配送中・基地へ帰還中)。どちらも同じ安全ルール
 FINAL = ("completed", "cancelled")
 STOP_HOLDS = ("corner", "signal_red", "signal_unknown", "signal_green")
 
@@ -25,6 +26,7 @@ STATUS_LABEL = {
     "arrived": "到着(本人確認待ち)",
     "unlock_pending": "開錠判断待ち",
     "unlocked": "開錠中",
+    "returning": "配送完了・基地へ帰還中",
     "completed": "配送完了",
     "denied": "開錠見送り",
     "cancelled": "キャンセル",
@@ -231,21 +233,43 @@ def _relock(s, ev, detail, sev="warning"):
 
 
 def _enforce_lock(s, now, ev):
+    """施錠の強制。開錠時間が正常に終わって施錠したときだけ True を返す(受け取り完了の合図)。"""
     if s["locked"] == 0:
         exp = s["unlock_expires_at"]
         if s["status"] != "unlocked":
             _relock(s, ev, "状態不整合のため施錠")
         elif not exp or now >= parse_iso(exp):
             _relock(s, ev, "開錠時間が終了したため自動施錠", "notice")
+            return True
         elif not s["comms_ok"] or not s["sensor_ok"]:
             _relock(s, ev, "通信またはセンサーの異常を検知したため即時施錠", "critical")
+    return False
+
+
+def _finish_delivery(s, ev):
+    """配送完了。基地への帰還プランがあれば、自動で帰還走行に入る(安全ルールは配送中と同じ)。"""
+    s.update(locked=1, unlock_expires_at=None, hold_reason=None)
+    ev.append(("completed", "notice", "配送を完了しました"))
+    plan = s.get("return_plan")
+    if not plan:
+        s["status"] = "completed"
+        return
+    route = load_route(plan)
+    s.update(status="returning", route=plan, progress_m=0.0, stop_idx=0, stop_reached=0,
+             cart_lat=route["points"][0][0], cart_lon=route["points"][0][1])
+    src = "道路に沿った経路" if route.get("source") == "road" else "簡易経路(直線)"
+    ev.append(("return_start", "notice",
+               f"基地への帰還を自動で開始(シミュレーション): {src}、{route['total']:.0f}m、停止ポイント{len(route['stops'])}か所。曲がり角・信号・障害物では停止し、管理者の再開許可が必要です"))
 
 
 def apply_tick(res, dt, now):
     s, ev = dict(res), []
     dt = max(0.0, min(float(dt), MAX_DT_S))
-    _enforce_lock(s, now, ev)
-    if s["status"] != "en_route":
+    received = _enforce_lock(s, now, ev)
+    if received and s.get("return_plan"):  # 受け取り時間が終わって施錠 → 配送完了 → 自動で帰還
+        _finish_delivery(s, ev)
+        return s, ev
+    if s["status"] not in MOVING:
         return s, ev
 
     cause = fault_cause(s)
@@ -275,6 +299,10 @@ def apply_tick(res, dt, now):
         s["hold_reason"] = reason
         kind = "corner_stop" if nxt["kind"] == "corner" else "signal_stop"
         ev.append((kind, "warning", "停止: " + HOLD_LABEL[reason] + "。映像と位置を確認して再開を許可してください"))
+    elif not nxt and dist >= route["total"] and s["status"] == "returning":
+        s["status"] = "completed"
+        s["cart_lat"], s["cart_lon"] = route["points"][-1]
+        ev.append(("returned", "notice", "基地に帰還しました(収納部は施錠中)"))
     elif not nxt and dist >= route["total"]:
         s["status"] = "arrived"
         s["cart_lat"], s["cart_lon"] = route["points"][-1]
@@ -304,7 +332,7 @@ def apply_dispatch(res, now):
 
 def apply_resume(res, confirmed, now):
     s, ev = dict(res), []
-    if s["status"] != "en_route" or not s["hold_reason"]:
+    if s["status"] not in MOVING or not s["hold_reason"]:
         raise ActionError("再開できる停止状態ではありません")
     if not confirmed:
         raise ActionError("安全確認のチェックが必要です")
@@ -331,7 +359,7 @@ def apply_resume(res, confirmed, now):
 
 def apply_estop(res, now):
     s, ev = dict(res), []
-    if s["status"] != "en_route":
+    if s["status"] not in MOVING:
         raise ActionError("走行中ではありません")
     s["hold_reason"] = "estop"
     ev.append(("estop", "critical", "非常停止"))
@@ -414,10 +442,9 @@ def apply_complete(res, now):
     if s["status"] not in ("arrived", "unlock_pending", "unlocked", "denied"):
         raise ActionError("完了にできる状態ではありません")
     was_open = s["locked"] == 0
-    s.update(status="completed", locked=1, unlock_expires_at=None, hold_reason=None)
     if was_open:
         ev.append(("relock", "notice", "施錠しました"))
-    ev.append(("completed", "notice", "配送を完了しました"))
+    _finish_delivery(s, ev)
     return s, ev
 
 

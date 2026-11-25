@@ -34,7 +34,7 @@ textarea{min-height:76px;resize:vertical}
 .chip{display:inline-block;padding:.15rem .65rem;border-radius:999px;font-size:.8rem;font-weight:700;background:#e2e8f0;color:#334155}
 .st-reserved{background:#e0f2fe;color:#075985}.st-en_route{background:#d1fae5;color:#065f46}
 .st-arrived,.st-unlock_pending{background:#ffedd5;color:#9a3412}.st-unlocked{background:#dcfce7;color:#166534}
-.st-completed{background:#e2e8f0;color:#334155}.st-denied,.st-cancelled{background:#f1f5f9;color:#64748b}
+.st-completed{background:#e2e8f0;color:#334155}.st-returning{background:#e0e7ff;color:#3730a3}.st-denied,.st-cancelled{background:#f1f5f9;color:#64748b}
 .chip.hold{background:#fee2e2;color:#991b1b}
 .res{border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;background:#fff;cursor:pointer}
 .res.sel{border-color:var(--teal);box-shadow:0 0 0 2px rgba(14,124,134,.2)}

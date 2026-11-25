@@ -19,6 +19,7 @@ import sim
 IS_RENDER = os.environ.get("RENDER") == "true"
 ADMIN_NAME = (os.environ.get("ADMIN_NAME") or "admin").strip()
 DEPOT = (float(os.environ.get("DEPOT_LAT", "35.6812")), float(os.environ.get("DEPOT_LON", "139.7671")))
+BASE_ADDRESS = os.environ.get("BASE_ADDRESS", "宮崎県宮崎市波島一丁目11番6号")  # 配送後に自動で戻る基地
 MAX_TRIP_M = float(os.environ.get("MAX_TRIP_M", "30000"))  # 出発地と配送先の直線距離の上限(シミュレーションが長くなりすぎないように)
 TZ_OFFSET_H = int(os.environ.get("TZ_OFFSET_H", "9"))
 
@@ -54,6 +55,36 @@ app.config.update(
 )
 if IS_RENDER:
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+_base_cache = {}
+
+
+def get_base():
+    """基地の座標。BASE_LAT/BASE_LON があればそれを使い、無ければ国土地理院の住所検索で調べる。見つからなければ None。"""
+    if "v" in _base_cache and (_base_cache["v"] or time.time() - _base_cache["t"] < 300):
+        return _base_cache["v"]
+    val = None
+    if os.environ.get("BASE_LAT") and os.environ.get("BASE_LON"):
+        val = (float(os.environ["BASE_LAT"]), float(os.environ["BASE_LON"]))
+    else:
+        import re as _re
+        # 「一丁目11番6号」→「1-11-6」の形にして検索すると見つかりやすい
+        kan = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5", "六": "6", "七": "7", "八": "8", "九": "9"}
+        q = BASE_ADDRESS
+        for k, v in kan.items():
+            q = q.replace(k + "丁目", v + "-")
+        q = _re.sub(r"(\d+)番(\d+)号", r"\1-\2", q).replace("番", "-").replace("号", "")
+        for query in (q, BASE_ADDRESS):
+            try:
+                res = geo._gsi(query)
+            except geo.ServiceError:
+                continue
+            if res:
+                val = (res[0]["lat"], res[0]["lon"])
+                break
+    _base_cache.update(v=val, t=time.time())
+    return val
+
 
 SIM_COLS = ["status", "hold_reason", "cart_lat", "cart_lon", "progress_m", "route", "locked",
             "unlock_expires_at", "obstacle", "comms_ok", "sensor_ok", "signal_state", "stop_idx", "stop_reached"]
@@ -473,7 +504,7 @@ def admin_tick(u):
         return err("不正な値です")
     dt = max(0.0, min(dt, sim.MAX_DT_S)) if d.get("run") else 0.0
     with db.reader() as tx:
-        ids = [r["id"] for r in tx.query("SELECT id FROM reservations WHERE status IN ('en_route','arrived','unlock_pending','unlocked')")]
+        ids = [r["id"] for r in tx.query("SELECT id FROM reservations WHERE status IN ('en_route','arrived','unlock_pending','unlocked','returning')")]
     for rid in ids:
         mutate(rid, lambda r: sim.apply_tick(r, dt, sim.now_utc()), "system")
     out = overview(after, sel)
@@ -492,6 +523,35 @@ def _a_complete(r, b, u): return sim.apply_complete(r, sim.now_utc())
 
 ADMIN_ACTIONS = {"dispatch": _a_dispatch, "resume": _a_resume, "estop": _a_estop, "sim": _a_sim,
                  "face-detected": _a_face, "unlock": _a_unlock, "complete": _a_complete}
+
+
+def ensure_return_plan(rid):
+    """配送後に基地へ戻る経路を用意する(配送先→基地)。基地が不明・遠すぎる場合は作らない(その場で完了)。"""
+    with db.reader() as tx:
+        r = tx.one("SELECT status, return_plan, lat, lon FROM reservations WHERE id=?", (rid,))
+    if not r or r["return_plan"] or r["status"] not in ("arrived", "unlock_pending", "unlocked", "denied"):
+        return None
+    base = get_base()
+    if not base:
+        note = "基地の位置を調べられなかったため、帰還は行いません(BASE_LAT / BASE_LON を設定してください)"
+    elif sim.haversine((r["lat"], r["lon"]), base) > MAX_TRIP_M:
+        note = f"基地まで{int(MAX_TRIP_M / 1000)}km以上離れているため、帰還は行いません(シミュレーション)"
+    elif sim.haversine((r["lat"], r["lon"]), base) < 20:
+        note = "すでに基地の位置にいるため、帰還は行いません"
+    else:
+        try:
+            plan, _ = make_plan((r["lat"], r["lon"]), base)
+        except ValueError:
+            plan = None
+        if not plan:  # 経路サービスに繋がらない・道が見つからない → 簡易経路
+            plan = json.dumps(sim.build_route((r["lat"], r["lon"]), base))
+        with db.transaction() as tx:
+            tx.execute("UPDATE reservations SET return_plan=? WHERE id=? AND return_plan IS NULL", (plan, rid))
+        return None
+    with db.transaction() as tx:
+        if not tx.one("SELECT id FROM events WHERE reservation_id=? AND kind='return_skipped'", (rid,)):
+            log_event(tx, rid, "system", "return_skipped", "notice", note)
+    return note
 
 
 def ensure_plan(rid):
@@ -518,6 +578,8 @@ def admin_action(u, rid, action):
     body = request.get_json(silent=True) or {}
     if action == "dispatch":
         ensure_plan(rid)
+    elif action == "complete" or (action == "unlock" and body.get("decision") == "open") or action == "face-detected":
+        ensure_return_plan(rid)  # 完了(または受け取り終了)のあと、自動で基地へ戻れるよう先に経路を用意する
     new, e = mutate(rid, lambda r: fn(r, body, u), f"admin:{u['name']}")
     if isinstance(e, LookupError):
         return err(str(e), 404)

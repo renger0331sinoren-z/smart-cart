@@ -67,6 +67,7 @@
 
   function banner(r) {
     if (r.status === 'cancelled' || r.status === 'completed') return null;
+    if (r.status === 'returning') return h('div', { class: 'banner info' }, 'お届けが完了しました。台車は基地へ戻っています。');
     if (r.status === 'unlocked') return h('div', { class: 'banner ok' }, `収納部が開きました。荷物をお受け取りください(あと${r.unlock_remaining_s ?? 0}秒で自動的に施錠されます)`);
     if (r.status === 'arrived') return h('div', { class: 'banner warn' }, '台車が到着しました。カメラの前に顔を近づけてください。');
     if (r.status === 'unlock_pending') return h('div', { class: 'banner warn' }, '確認中です。そのままお待ちください。収納部は施錠されています。');
