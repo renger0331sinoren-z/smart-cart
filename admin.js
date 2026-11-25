@@ -159,7 +159,11 @@
 
     // カメラ(模擬映像。自分のWebカメラで代替表示も可能)
     cam.canvas = h('canvas', { class: 'cam', width: 640, height: 360 });
-    cam.video = h('video', { autoplay: true, muted: true, playsinline: true, hidden: true });
+    if (!cam.video) {  // video要素は1つを使い回す(画面の再描画で映像が消えないように)
+      cam.video = h('video', { playsinline: true, autoplay: true });
+      cam.video.muted = true;
+    }
+    cam.video.hidden = !cam.stream;
     kids.push(h('h3', { style: 'margin-top:.8rem' }, '台車カメラ(シミュレーション映像)'));
     kids.push(h('div', { class: 'camwrap' }, cam.canvas, cam.video));
     kids.push(h('div', { class: 'row', style: 'margin-top:.4rem' },
@@ -205,11 +209,23 @@
   }
 
   async function toggleWebcam() {
-    if (cam.stream) { cam.stream.getTracks().forEach((t) => t.stop()); cam.stream = null; cam.video.hidden = true; S.ctlSig = ''; return; }
+    if (cam.stream) {
+      cam.stream.getTracks().forEach((t) => t.stop()); cam.stream = null;
+      cam.video.srcObject = null; cam.video.hidden = true; S.ctlSig = ''; renderDetail(); return;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toast('このブラウザ(またはhttp接続)ではWebカメラを使えません', 'warning'); return;
+    }
     try {
-      cam.stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      cam.video.srcObject = cam.stream; cam.video.hidden = false; S.ctlSig = '';
-    } catch (_) { toast('Webカメラを使用できませんでした', 'warning'); }
+      cam.stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      cam.video.srcObject = cam.stream; cam.video.hidden = false;
+      cam.video.play().catch(() => {});
+      S.ctlSig = ''; renderDetail();
+    } catch (ex) {
+      const msg = { NotAllowedError: 'カメラの使用が許可されていません。アドレスバーのカメラのマークから「許可」にしてください',
+        NotFoundError: 'カメラが見つかりません', NotReadableError: '他のアプリがカメラを使用中です' }[ex.name] || 'Webカメラを使用できませんでした';
+      toast(msg, 'warning');
+    }
   }
 
   // 模擬カメラ映像
