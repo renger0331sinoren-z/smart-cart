@@ -188,10 +188,17 @@
       ctl.push(h('button', { class: 'btn ok', onclick: () => {
         if (confirm(`予約 #${r.id}(${r.user_name})の収納部を開錠します。映像と配送情報を確認しましたか?`)) act(r.id, 'unlock', { decision: 'open' });
       } }, '🔓 開ける'));
-      ctl.push(h('button', { class: 'btn danger', onclick: () => act(r.id, 'unlock', { decision: 'deny' }) }, '開けない'));
+      ctl.push(h('button', { class: 'btn danger', onclick: () => {
+        if (confirm('収納部は開けません。施錠したまま、台車はその場で待機します。よろしいですか?')) act(r.id, 'unlock', { decision: 'deny' });
+      } }, '開けない'));
     }
     if (r.status === 'unlocked') ctl.push(h('button', { class: 'btn primary', onclick: () => act(r.id, 'complete') }, '🔒 施錠して完了'));
-    if (r.status === 'denied') ctl.push(h('button', { class: 'btn', onclick: () => act(r.id, 'complete') }, '完了にする'));
+    if (r.status === 'denied') {
+      ctl.push(h('div', { class: 'banner warn', style: 'flex-basis:100%' }, '収納部は施錠したまま、台車はその場で待機しています。'));
+      ctl.push(h('button', { class: 'btn primary', onclick: () => {
+        if (confirm('台車を基地へ帰還させます(曲がり角・信号・障害物では停止し、再開の許可が必要です)。よろしいですか?')) act(r.id, 'complete');
+      } }, '基地へ帰還させる'));
+    }
     if (ctl.length) { kids.push(h('h3', { style: 'margin-top:.8rem' }, '操作')); kids.push(h('div', { class: 'row' }, ctl)); }
 
     // 模擬センサー入力
@@ -274,6 +281,12 @@
   document.getElementById('run-btn').addEventListener('click', (e) => {
     S.running = !S.running;
     e.target.textContent = S.running ? '⏸ 走行シミュレーション停止' : '▶ 走行シミュレーション開始';
+  });
+  document.getElementById('cart-reset').addEventListener('click', async () => {
+    if (!confirm('台車の現在地を基地にリセットします(走行中の台車がないときだけできます)。よろしいですか?')) return;
+    try { await api('/api/admin/cart-reset', { method: 'POST', body: {} }); toast('台車の現在地を基地にリセットしました', 'notice'); }
+    catch (ex) { toast(ex.message, 'warning'); }
+    poll();
   });
   document.getElementById('sound-btn').addEventListener('click', (e) => {
     S.sound = !S.sound; e.target.textContent = S.sound ? '🔔 通知音 ON' : '🔕 通知音 OFF';

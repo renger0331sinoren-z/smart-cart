@@ -18,24 +18,14 @@
         <input name="scheduled_at" type="datetime-local" required>
       </label>
 
+      <div id="cart-info" class="banner info">台車の現在地を確認しています…</div>
       <div class="spot">
-        <h3>① 出発地(荷物を受け取る場所)</h3>
-        <div id="origin-search"></div>
-        <p id="origin-info" class="hint">未選択(検索するか、地図をタップ)</p>
-        <label>出発地の名前・目印<input name="origin_address" type="text" maxlength="200" required placeholder="例: 宮崎駅 西口"></label>
-      </div>
-      <div class="spot">
-        <h3>② 配送先(届ける場所)</h3>
+        <h3>配送先(届ける場所)</h3>
         <div id="dest-search"></div>
-        <p id="dest-info" class="hint">未選択(検索するか、地図をタップ)</p>
+        <p id="dest-info" class="hint">未選択(検索するか、下の地図をタップ)</p>
         <label>配送先の場所(目印・部屋番号など)<input name="address" type="text" maxlength="200" required placeholder="例: ○○ビル 3階 305号室 前"></label>
       </div>
-
-      <p class="hint">地図をタップして選ぶときは、どちらを選ぶかを切り替えてください。右上のボタンで標準地図にも切り替えられます。</p>
-      <div class="pickmode" role="radiogroup" aria-label="地図で選ぶ場所">
-        <label id="pm-origin" class="on"><input type="radio" name="pickmode" value="origin" checked> 出発地を選ぶ</label>
-        <label id="pm-dest"><input type="radio" name="pickmode" value="dest"> 配送先を選ぶ</label>
-      </div>
+      <p class="hint">出発地は選ぶ必要はありません。台車は、いまいる場所から配送先へ向かいます。地図の緑「台」が台車の現在地です。</p>
       <div id="pick-map" class="map"></div>
       <p class="hint">台車は、地図データ上の道路に沿って走ります。道路から遠い場所は選べません。</p>
       <label>荷物の内容
@@ -54,7 +44,7 @@
   <section class="card">
     <h2>あなたの予約と配送状況</h2>
     <div id="live-map" class="map"></div>
-    <p class="hint">オレンジの丸が台車、緑「出」が出発地、青「着」が配送先です。</p>
+    <p class="hint">オレンジの丸が台車、緑「出」が出発した場所、青「着」が配送先です。</p>
     <div id="res-list"></div>
   </section>
 </main>

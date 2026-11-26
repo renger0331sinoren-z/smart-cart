@@ -41,6 +41,17 @@ HOLD_LABEL = {
     "sensor_fault": "センサー異常のため停止",
     "estop": "非常停止",
 }
+def label(status, outcome=None):
+    """表示名。開錠を見送った配送は、帰還中・終了後もそれが分かるようにする。"""
+    if outcome == "denied" and status == "denied":
+        return "開錠見送り(待機中)"
+    if outcome == "denied" and status == "returning":
+        return "開錠見送り・基地へ帰還中"
+    if outcome == "denied" and status == "completed":
+        return "開錠見送り・終了"
+    return STATUS_LABEL.get(status, status)
+
+
 VOICE_PROMPT = "カメラの前に顔を近づけてください。配送の確認を行います"
 
 
@@ -246,10 +257,13 @@ def _enforce_lock(s, now, ev):
     return False
 
 
-def _finish_delivery(s, ev):
-    """配送完了。基地への帰還プランがあれば、自動で帰還走行に入る(安全ルールは配送中と同じ)。"""
+def _finish_delivery(s, ev, delivered=True):
+    """配送の終了。基地への帰還プランがあれば、自動で帰還走行に入る(安全ルールは配送中と同じ)。
+    delivered=False は、管理者が「開けない」を選んだ場合(荷物は渡さず、施錠したまま帰る)。"""
     s.update(locked=1, unlock_expires_at=None, hold_reason=None)
-    ev.append(("completed", "notice", "配送を完了しました"))
+    s["outcome"] = "delivered" if delivered else "denied"
+    ev.append(("completed", "notice", "配送を完了しました") if delivered
+              else ("delivery_closed", "notice", "配送を終了しました(荷物は渡していません・施錠したまま)"))
     plan = s.get("return_plan")
     if not plan:
         s["status"] = "completed"
@@ -423,8 +437,8 @@ def apply_unlock(res, decision, now):
     if s["status"] != "unlock_pending":
         raise ActionError("開錠判断待ちではありません")
     if decision == "deny":
-        s["status"], s["locked"] = "denied", 1
-        ev.append(("unlock_denied", "notice", "管理者が「開けない」を選択(施錠維持)"))
+        s["status"], s["locked"], s["outcome"] = "denied", 1, "denied"
+        ev.append(("unlock_denied", "notice", "管理者が「開けない」を選択(施錠維持。台車はその場で待機します。帰還は管理者の指示で行います)"))
         return s, ev
     if decision != "open":
         raise ActionError("不正な操作です")
@@ -442,9 +456,10 @@ def apply_complete(res, now):
     if s["status"] not in ("arrived", "unlock_pending", "unlocked", "denied"):
         raise ActionError("完了にできる状態ではありません")
     was_open = s["locked"] == 0
+    delivered = s["status"] == "unlocked"  # 実際に開錠して渡した場合だけ「配送完了」。それ以外は荷物を渡していない
     if was_open:
         ev.append(("relock", "notice", "施錠しました"))
-    _finish_delivery(s, ev)
+    _finish_delivery(s, ev, delivered=delivered)
     return s, ev
 
 

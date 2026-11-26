@@ -108,11 +108,13 @@ def init_db():
             obstacle INTEGER NOT NULL DEFAULT 0, comms_ok INTEGER NOT NULL DEFAULT 1,
             sensor_ok INTEGER NOT NULL DEFAULT 1, signal_state TEXT NOT NULL DEFAULT 'red',
             origin_address TEXT, origin_lat DOUBLE PRECISION, origin_lon DOUBLE PRECISION,
-            route_plan TEXT, return_plan TEXT, stop_idx INTEGER NOT NULL DEFAULT 0, stop_reached INTEGER NOT NULL DEFAULT 0,
+            route_plan TEXT, return_plan TEXT, outcome TEXT, stop_idx INTEGER NOT NULL DEFAULT 0, stop_reached INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""",
         f"""CREATE TABLE IF NOT EXISTS events (
             id {pk}, ts TEXT NOT NULL, reservation_id INTEGER, actor TEXT NOT NULL,
             kind TEXT NOT NULL, severity TEXT NOT NULL DEFAULT 'info', detail TEXT NOT NULL DEFAULT '')""",
+        """CREATE TABLE IF NOT EXISTS cart_state (
+            id INTEGER PRIMARY KEY, lat DOUBLE PRECISION NOT NULL, lon DOUBLE PRECISION NOT NULL, updated_at TEXT NOT NULL)""",
         "CREATE INDEX IF NOT EXISTS idx_res_user ON reservations(user_id)",
         "CREATE INDEX IF NOT EXISTS idx_events_res ON events(reservation_id)",
     ]
@@ -123,7 +125,7 @@ def init_db():
             tx.execute(s)
         # 既存DBへの列追加(前の版で作られたDBを壊さずに更新する)
         new_cols = [("origin_address", "TEXT"), ("origin_lat", "DOUBLE PRECISION"), ("origin_lon", "DOUBLE PRECISION"),
-                    ("route_plan", "TEXT"), ("return_plan", "TEXT"), ("stop_idx", "INTEGER NOT NULL DEFAULT 0"),
+                    ("route_plan", "TEXT"), ("return_plan", "TEXT"), ("outcome", "TEXT"), ("stop_idx", "INTEGER NOT NULL DEFAULT 0"),
                     ("stop_reached", "INTEGER NOT NULL DEFAULT 0")]
         if IS_PG:
             for name, typ in new_cols:

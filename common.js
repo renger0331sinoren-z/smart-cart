@@ -141,5 +141,19 @@
     try { await api('/api/logout', { method: 'POST', body: {} }); } catch (_) {}
     location.href = '/login';
   };
+  // テーマ(色の切り替え)。選択はこのブラウザに記憶する
+  const THEMES = [['teal', 'ティール(標準)'], ['blue', 'ブルー'], ['sunset', 'サンセット'], ['dark', 'ダーク']];
+  const themeStore = { get() { try { return localStorage.getItem('theme'); } catch (_) { return null; } }, set(v) { try { localStorage.setItem('theme', v); } catch (_) {} } };
+  function applyTheme(t) {
+    if (!THEMES.some((x) => x[0] === t)) t = 'teal';
+    if (t === 'teal') document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', t);
+    return t;
+  }
+  const cur = applyTheme(themeStore.get());
+  const sel = h('select', { class: 'theme-select', 'aria-label': 'テーマ(色)' }, ...THEMES.map(([v, n]) => h('option', { value: v, selected: v === cur }, '🎨 ' + n)));
+  sel.addEventListener('change', () => { themeStore.set(applyTheme(sel.value)); });
+  const bar = document.querySelector('.topbar');
+  if (bar) { const out = bar.querySelector('[data-logout]'); bar.insertBefore(sel, out || null); } else { sel.classList.add('theme-float'); document.body.append(sel); }
+
   document.querySelectorAll('[data-logout]').forEach((b) => b.addEventListener('click', () => w.logout()));
 })(window);

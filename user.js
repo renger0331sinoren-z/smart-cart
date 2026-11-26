@@ -2,8 +2,7 @@
   const pickMap = makeMap('pick-map');
   const liveMap = makeMap('live-map');
   const pin = (cls, t) => L.divIcon({ className: '', html: `<div class="pin ${cls}">${t}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
-  const P = { origin: null, dest: null }, markers = {};
-  let selected = null, mode = 'origin';
+  let dest = null, destMarker = null, cartMarker = null, cartPos = null, selected = null;
   const layers = L.layerGroup().addTo(liveMap);
   let cache = [];
 
@@ -14,59 +13,65 @@
   f.scheduled_at.value = toLocal(new Date(Date.now() + 3600e3));
   f.scheduled_at.min = toLocal(new Date());
 
-  const NAME_FIELD = { origin: f.origin_address, dest: f.address };
-  const INFO = { origin: document.getElementById('origin-info'), dest: document.getElementById('dest-info') };
+  const destInfo = document.getElementById('dest-info');
 
-  function setPoint(kind, lat, lon, name, fly) {
-    P[kind] = { lat, lon };
-    const ll = [lat, lon], icon = pin(kind === 'origin' ? 'o' : 'd', kind === 'origin' ? '出' : '着');
-    if (markers[kind]) markers[kind].setLatLng(ll); else markers[kind] = L.marker(ll, { icon }).addTo(pickMap);
-    INFO[kind].textContent = `選択済み(${lat.toFixed(5)}, ${lon.toFixed(5)})`;
-    if (name && !NAME_FIELD[kind].value.trim()) NAME_FIELD[kind].value = name;
-    if (fly) pickMap.setView(ll, Math.max(pickMap.getZoom(), 16));
-    else if (P.origin && P.dest) pickMap.fitBounds(L.latLngBounds([[P.origin.lat, P.origin.lon], [P.dest.lat, P.dest.lon]]).pad(0.3));
+  function setDest(lat, lon, name, fly) {
+    dest = { lat, lon };
+    const ll = [lat, lon];
+    if (destMarker) destMarker.setLatLng(ll); else destMarker = L.marker(ll, { icon: pin('d', '着') }).addTo(pickMap);
+    destInfo.textContent = `選択済み(${lat.toFixed(5)}, ${lon.toFixed(5)})`;
+    if (name && !f.address.value.trim()) f.address.value = name;
+    if (fly || !cartPos) pickMap.setView(ll, Math.max(pickMap.getZoom(), 16));
+    else pickMap.fitBounds(L.latLngBounds([[cartPos.lat, cartPos.lon], ll]).pad(0.3));
   }
 
-  document.getElementById('origin-search').append(makeSearch('出発地を検索(例: みやざき、宮崎駅)', (p) => { NAME_FIELD.origin.value = p.name; setPoint('origin', p.lat, p.lon, p.name, true); }));
-  document.getElementById('dest-search').append(makeSearch('配送先を検索(例: みやざき、宮崎市役所)', (p) => { NAME_FIELD.dest.value = p.name; setPoint('dest', p.lat, p.lon, p.name, true); }));
-
-  document.querySelectorAll('input[name=pickmode]').forEach((r) => r.addEventListener('change', () => {
-    mode = r.value;
-    document.getElementById('pm-origin').classList.toggle('on', mode === 'origin');
-    document.getElementById('pm-dest').classList.toggle('on', mode === 'dest');
+  document.getElementById('dest-search').append(makeSearch('配送先を検索(例: みやざき、宮崎市役所)', (p) => {
+    f.address.value = p.name; setDest(p.lat, p.lon, p.name, true);
   }));
-  pickMap.on('click', (e) => {
-    setPoint(mode, e.latlng.lat, e.latlng.lng, '', false);
-    if (mode === 'origin' && !P.dest) { mode = 'dest'; document.querySelector('input[name=pickmode][value=dest]').click(); }
-  });
+  pickMap.on('click', (e) => setDest(e.latlng.lat, e.latlng.lng, '', false));
+
+  // 台車の現在地(最初は基地。配送のあとは最後にいた場所)
+  let firstCart = true;
+  async function loadCart() {
+    const box = document.getElementById('cart-info');
+    try {
+      const c = await api('/api/cart');
+      cartPos = { lat: c.lat, lon: c.lon };
+      box.textContent = '台車は現在、' + (c.at_base ? c.label : '配送のあとの場所(' + c.lat.toFixed(4) + ', ' + c.lon.toFixed(4) + ')') + ' にいます。ここから向かいます。';
+      if (cartMarker) cartMarker.setLatLng([c.lat, c.lon]); else cartMarker = L.marker([c.lat, c.lon], { icon: pin('o', '台') }).addTo(pickMap);
+      if (firstCart) { firstCart = false; pickMap.setView([c.lat, c.lon], 16); }
+    } catch (ex) { box.textContent = '台車の現在地を確認できません: ' + ex.message; }
+  }
+  loadCart();
+  setInterval(loadCart, 5000);
 
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const errEl = document.getElementById('res-error');
     errEl.textContent = '';
-    if (!P.origin) { errEl.textContent = '出発地を検索するか、地図をタップして選んでください'; return; }
-    if (!P.dest) { errEl.textContent = '配送先を検索するか、地図をタップして選んでください'; return; }
+    if (!dest) { errEl.textContent = '配送先を検索するか、地図をタップして選んでください'; return; }
     const btn = f.querySelector('button[type=submit]');
     btn.disabled = true; btn.textContent = '道路経路を確認しています…';
     try {
       await api('/api/reservations', {
         method: 'POST',
         body: {
-          scheduled_at: f.scheduled_at.value, address: f.address.value, lat: P.dest.lat, lon: P.dest.lon,
-          origin_address: f.origin_address.value, origin_lat: P.origin.lat, origin_lon: P.origin.lon,
+          scheduled_at: f.scheduled_at.value, address: f.address.value, lat: dest.lat, lon: dest.lon,
           item_desc: f.item_desc.value, forgotten_items: f.forgotten_items.value, notes: f.notes.value,
         },
       });
       toast('予約を受け付けました', 'notice');
-      f.address.value = f.origin_address.value = f.item_desc.value = f.forgotten_items.value = f.notes.value = '';
-      for (const k of ['origin', 'dest']) { if (markers[k]) { pickMap.removeLayer(markers[k]); delete markers[k]; } P[k] = null; INFO[k].textContent = '未選択(検索するか、地図をタップ)'; }
+      f.address.value = f.item_desc.value = f.forgotten_items.value = f.notes.value = '';
+      if (destMarker) { pickMap.removeLayer(destMarker); destMarker = null; }
+      dest = null; destInfo.textContent = '未選択(検索するか、下の地図をタップ)';
       refresh();
     } catch (ex) { errEl.textContent = ex.message; }
     finally { btn.disabled = false; btn.textContent = 'この内容で予約する'; }
   });
 
   function banner(r) {
-    if (r.status === 'cancelled' || r.status === 'completed') return null;
+    if (r.status === 'cancelled' || (r.status === 'completed' && r.outcome !== 'denied')) return null;
+    if (r.outcome === 'denied') return h('div', { class: 'banner crit' }, '今回は収納部を開けませんでした(荷物は渡していません)。' + (r.status === 'returning' ? '台車は基地へ戻ります。' : '') + 'ご不明な点はお問い合わせください。');
     if (r.status === 'returning') return h('div', { class: 'banner info' }, 'お届けが完了しました。台車は基地へ戻っています。');
     if (r.status === 'unlocked') return h('div', { class: 'banner ok' }, `収納部が開きました。荷物をお受け取りください(あと${r.unlock_remaining_s ?? 0}秒で自動的に施錠されます)`);
     if (r.status === 'arrived') return h('div', { class: 'banner warn' }, '台車が到着しました。カメラの前に顔を近づけてください。');
@@ -87,7 +92,7 @@
           h('strong', {}, `予約 #${r.id}`),
           h('span', { class: 'chip st-' + r.status }, r.status_label)),
         h('div', { class: 'meta' }, `日時: ${fmtLocal(r.scheduled_at)}`),
-        h('div', { class: 'meta' }, `出発地: ${r.origin_address || '-'}`),
+        h('div', { class: 'meta' }, `出発する場所: ${r.origin_address || '-'}`),
         h('div', { class: 'meta' }, `配送先: ${r.address}`),
         h('div', { class: 'meta' }, `荷物: ${r.item_desc}`),
         r.forgotten_items ? h('div', { class: 'meta' }, `忘れ物: ${r.forgotten_items}`) : null,
