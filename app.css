@@ -104,3 +104,8 @@ html[data-theme="dark"] .banner.warn{background:#4a2a0c;color:#fed7aa}
 html[data-theme="dark"] .banner.ok{background:#0f3d2e;color:#a7f3d0}
 html[data-theme="dark"] .banner.crit{background:#4c1414;color:#fecaca}
 html[data-theme="dark"] .topbar{background:#0f766e}
+
+/* 右下の表記 */
+.credit{position:fixed;right:8px;bottom:6px;z-index:2500;font-size:.72rem;color:var(--muted);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:2px 8px;pointer-events:none;opacity:.92}
+#toasts{bottom:36px !important}
+body{padding-bottom:34px}

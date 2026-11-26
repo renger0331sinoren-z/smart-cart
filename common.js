@@ -150,7 +150,7 @@
     return t;
   }
   const cur = applyTheme(themeStore.get());
-  const sel = h('select', { class: 'theme-select', 'aria-label': 'テーマ(色)' }, ...THEMES.map(([v, n]) => h('option', { value: v, selected: v === cur }, '🎨 ' + n)));
+  const sel = h('select', { class: 'theme-select', 'aria-label': 'テーマ(色)' }, ...THEMES.map(([v, n]) => h('option', { value: v, selected: v === cur }, '色: ' + n)));
   sel.addEventListener('change', () => { themeStore.set(applyTheme(sel.value)); });
   const bar = document.querySelector('.topbar');
   if (bar) { const out = bar.querySelector('[data-logout]'); bar.insertBefore(sel, out || null); } else { sel.classList.add('theme-float'); document.body.append(sel); }

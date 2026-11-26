@@ -143,7 +143,7 @@
     const kids = [];
     kids.push(h('h2', {}, `予約 #${r.id} / ${r.user_name}`));
     kids.push(h('div', { class: 'row' }, h('span', { class: 'chip st-' + r.status }, r.status_label),
-      h('span', { class: 'chip ' + (r.locked ? 'st-completed' : 'hold') }, r.locked ? '🔒 施錠中' : '🔓 開錠中'),
+      h('span', { class: 'chip ' + (r.locked ? 'st-completed' : 'hold') }, r.locked ? '施錠中' : '開錠中'),
       r.hold_reason ? h('span', { class: 'chip hold' }, r.hold_label) : null));
     kids.push(h('dl', { class: 'kv' },
       h('dt', {}, '希望日時'), h('dd', {}, fmtLocal(r.scheduled_at)),
@@ -168,7 +168,7 @@
     kids.push(h('div', { class: 'camwrap' }, cam.canvas, cam.video));
     kids.push(h('div', { class: 'row', style: 'margin-top:.4rem' },
       h('button', { class: 'btn small', onclick: toggleWebcam }, cam.stream ? 'Webカメラ停止' : 'Webカメラで試す'),
-      h('button', { class: 'btn small', onclick: () => { if (!speak('カメラの前に顔を近づけてください。配送の確認を行います')) toast('この端末では音声を再生できません', 'warning'); } }, '🔊 音声テスト')));
+      h('button', { class: 'btn small', onclick: () => { if (!speak('カメラの前に顔を近づけてください。配送の確認を行います')) toast('この端末では音声を再生できません', 'warning'); } }, '音声テスト')));
 
     // 操作
     const ctl = [];
@@ -177,7 +177,7 @@
       if (r.hold_reason) ctl.push(h('button', { class: 'btn ok', onclick: () => {
         if (confirm('カメラ映像と位置情報で周囲の安全(人・車・障害物・信号)を確認しました。走行を再開しますか?')) act(r.id, 'resume', { confirmed: true });
       } }, '安全確認OK → 再開を許可'));
-      ctl.push(h('button', { class: 'btn danger', onclick: () => act(r.id, 'estop') }, '⛔ 非常停止'));
+      ctl.push(h('button', { class: 'btn danger', onclick: () => act(r.id, 'estop') }, '非常停止'));
     }
     if (r.status === 'arrived') {
       ctl.push(h('button', { class: 'btn warn', onclick: () => act(r.id, 'face-detected') }, '(模擬)利用者がカメラの前に来た'));
@@ -187,12 +187,12 @@
       ctl.push(h('div', { class: 'banner crit', style: 'flex-basis:100%' }, '開錠要求: 映像と配送情報を確認して判断してください'));
       ctl.push(h('button', { class: 'btn ok', onclick: () => {
         if (confirm(`予約 #${r.id}(${r.user_name})の収納部を開錠します。映像と配送情報を確認しましたか?`)) act(r.id, 'unlock', { decision: 'open' });
-      } }, '🔓 開ける'));
+      } }, '開ける'));
       ctl.push(h('button', { class: 'btn danger', onclick: () => {
         if (confirm('収納部は開けません。施錠したまま、台車はその場で待機します。よろしいですか?')) act(r.id, 'unlock', { decision: 'deny' });
       } }, '開けない'));
     }
-    if (r.status === 'unlocked') ctl.push(h('button', { class: 'btn primary', onclick: () => act(r.id, 'complete') }, '🔒 施錠して完了'));
+    if (r.status === 'unlocked') ctl.push(h('button', { class: 'btn primary', onclick: () => act(r.id, 'complete') }, '施錠して完了'));
     if (r.status === 'denied') {
       ctl.push(h('div', { class: 'banner warn', style: 'flex-basis:100%' }, '収納部は施錠したまま、台車はその場で待機しています。'));
       ctl.push(h('button', { class: 'btn primary', onclick: () => {
@@ -280,7 +280,7 @@
   // ---------- 初期化 ----------
   document.getElementById('run-btn').addEventListener('click', (e) => {
     S.running = !S.running;
-    e.target.textContent = S.running ? '⏸ 走行シミュレーション停止' : '▶ 走行シミュレーション開始';
+    e.target.textContent = S.running ? '走行シミュレーション停止' : '走行シミュレーション開始';
   });
   document.getElementById('cart-reset').addEventListener('click', async () => {
     if (!confirm('台車の現在地を基地にリセットします(走行中の台車がないときだけできます)。よろしいですか?')) return;
@@ -289,7 +289,7 @@
     poll();
   });
   document.getElementById('sound-btn').addEventListener('click', (e) => {
-    S.sound = !S.sound; e.target.textContent = S.sound ? '🔔 通知音 ON' : '🔕 通知音 OFF';
+    S.sound = !S.sound; e.target.textContent = S.sound ? '通知音 ON' : '通知音 OFF';
   });
   document.getElementById('only-sel').addEventListener('change', () => { document.getElementById('log').dataset.sig = ''; renderLog(); });
   fillVoiceSelect(document.getElementById('voice'));

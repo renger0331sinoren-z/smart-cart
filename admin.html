@@ -4,10 +4,10 @@
 {% block bodyattrs %}data-depot-lat="{{ depot[0] }}" data-depot-lon="{{ depot[1] }}"{% endblock %}
 {% block body %}
 <header class="topbar">
-  <span class="brand">🛒 管理画面</span>
+  <span class="brand">管理画面</span>
   <span class="badge sim">シミュレーション / 実機制御: {{ '有効' if hw else '無効' }}</span>
   <span class="spacer"></span>
-  <button id="run-btn" class="btn small">▶ 走行シミュレーション開始</button>
+  <button id="run-btn" class="btn small">走行シミュレーション開始</button>
   <label class="row" style="margin:0;font-weight:500">速度
     <select id="mult" aria-label="シミュレーション倍速">
       <option value="1">等倍</option><option value="5" selected>5倍</option><option value="20">20倍</option><option value="60">60倍</option>
@@ -16,8 +16,8 @@
   <label class="row" style="margin:0;font-weight:500">音声
     <select id="voice" class="voice" aria-label="案内音声"></select>
   </label>
-  <button id="cart-reset" class="btn small" title="台車の現在地を基地(宮崎県宮崎市波島一丁目11番6号)に戻します">📍 台車を基地へ</button>
-  <button id="sound-btn" class="btn small">🔔 通知音 ON</button>
+  <button id="cart-reset" class="btn small" title="台車の現在地を基地(宮崎県宮崎市波島一丁目11番6号)に戻します">台車を基地へ</button>
+  <button id="sound-btn" class="btn small">通知音 ON</button>
   <button class="btn small" data-logout>ログアウト</button>
 </header>
 <main class="admin-grid">
