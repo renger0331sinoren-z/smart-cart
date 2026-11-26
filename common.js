@@ -141,6 +141,19 @@
     try { await api('/api/logout', { method: 'POST', body: {} }); } catch (_) {}
     location.href = '/login';
   };
+  // アプリ化(ホーム画面に追加)。対応しているブラウザでは「アプリにする」ボタンを出す
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  let installEvt = null;
+  const installBtn = h('button', { class: 'btn small', type: 'button', hidden: true }, 'アプリにする');
+  window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installEvt = e; installBtn.hidden = false; });
+  window.addEventListener('appinstalled', () => { installEvt = null; installBtn.hidden = true; toast('アプリとして入れました', 'notice'); });
+  installBtn.addEventListener('click', async () => {
+    if (!installEvt) return;
+    installEvt.prompt();
+    try { await installEvt.userChoice; } catch (_) {}
+    installEvt = null; installBtn.hidden = true;
+  });
+
   // テーマ(色の切り替え)。選択はこのブラウザに記憶する
   const THEMES = [['teal', 'ティール(標準)'], ['blue', 'ブルー'], ['sunset', 'サンセット'], ['dark', 'ダーク']];
   const themeStore = { get() { try { return localStorage.getItem('theme'); } catch (_) { return null; } }, set(v) { try { localStorage.setItem('theme', v); } catch (_) {} } };
@@ -153,7 +166,8 @@
   const sel = h('select', { class: 'theme-select', 'aria-label': 'テーマ(色)' }, ...THEMES.map(([v, n]) => h('option', { value: v, selected: v === cur }, '色: ' + n)));
   sel.addEventListener('change', () => { themeStore.set(applyTheme(sel.value)); });
   const bar = document.querySelector('.topbar');
-  if (bar) { const out = bar.querySelector('[data-logout]'); bar.insertBefore(sel, out || null); } else { sel.classList.add('theme-float'); document.body.append(sel); }
+  if (bar) { const out = bar.querySelector('[data-logout]'); bar.insertBefore(sel, out || null); bar.insertBefore(installBtn, out || null); }
+  else { sel.classList.add('theme-float'); document.body.append(sel); }
 
   document.querySelectorAll('[data-logout]').forEach((b) => b.addEventListener('click', () => w.logout()));
 })(window);

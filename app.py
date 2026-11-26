@@ -30,6 +30,34 @@ STATIC_FILES = {"app.css", "admin.js", "common.js", "login.js", "user.js"}
 app = Flask(__name__, template_folder=BASE_DIR if FLAT else "templates", static_folder=None)
 
 
+# ---------- アプリ(PWA)用のファイル ----------
+APP_ICONS = {"icon-192.png", "icon-512.png", "icon-maskable-512.png", "apple-touch-icon.png"}
+
+
+@app.get("/sw.js")
+def service_worker():
+    r = send_from_directory(BASE_DIR, "sw.js", mimetype="text/javascript")
+    r.headers["Cache-Control"] = "no-cache"
+    r.headers["Service-Worker-Allowed"] = "/"
+    return r
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    r = send_from_directory(BASE_DIR, "manifest.webmanifest", mimetype="application/manifest+json")
+    r.headers["Cache-Control"] = "no-cache"
+    return r
+
+
+@app.get("/icons/<name>")
+def app_icon(name):
+    if name not in APP_ICONS:
+        abort(404)
+    r = send_from_directory(BASE_DIR, name, mimetype="image/png")
+    r.headers["Cache-Control"] = "public, max-age=86400"
+    return r
+
+
 @app.get("/static/<path:name>")
 def static_files(name):
     if FLAT:

@@ -1,0 +1,18 @@
+{
+  "id": "/",
+  "name": "スマート台車配送",
+  "short_name": "台車配送",
+  "description": "スマート台車の配送予約シミュレーター",
+  "lang": "ja",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f3f6f8",
+  "theme_color": "#0e7c86",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

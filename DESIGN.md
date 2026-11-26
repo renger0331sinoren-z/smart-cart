@@ -93,3 +93,8 @@ completed / cancelled(利用者は reserved のときだけキャンセル可)
 - 利用者は出発地を選ばない。台車は「いまいる場所(最後にいた場所)」から配送先へ向かう。最初は基地(`BASE_ADDRESS`)。
 - 台車の現在地は `cart_state` テーブルに記憶(台車が動くたびに更新)。出発の直前に、現在地から道路経路を作り直す。
 - 管理画面の「台車を基地へ」で、現在地を基地にリセットできる(走行中は不可)。
+
+## 11. アプリ化(PWA)
+- `manifest.webmanifest` / `sw.js` / アイコン4枚(ルート直下)で、ホーム画面に追加できるアプリにする(Chrome・Edge・Android・iPhoneのSafari)。
+- service workerは通信できないときの案内画面だけ。ログイン後のデータは保存しない(他人に見えない・古くならない)。
+- ストア(Google Play / App Store)向けは、このPWAを包む形(Bubblewrap / Capacitor)で後から可能。
